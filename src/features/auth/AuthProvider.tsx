@@ -10,7 +10,7 @@ import {
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { clearTorneoActivoStorage } from '@/features/torneos/torneosService'
-import { signInWithEmail, signOut as signOutService } from '@/features/auth/authService'
+import { getCurrentSession, signInWithEmail, signOut as signOutService } from '@/features/auth/authService'
 
 type AuthContextValue = {
   user: User | null
@@ -29,16 +29,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true
 
-    void supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return
-      if (error) {
-        console.error(error)
-        setSession(null)
-      } else {
-        setSession(data.session)
-      }
-      setLoading(false)
-    })
+    void getCurrentSession()
+      .then((s) => {
+        if (!mounted) return
+        setSession(s)
+      })
+      .catch((err) => {
+        console.error(err)
+        if (mounted) setSession(null)
+      })
+      .finally(() => {
+        if (mounted) setLoading(false)
+      })
 
     const {
       data: { subscription },
@@ -53,8 +55,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const next = await signInWithEmail(email, password)
-    setSession(next)
+    const data = await signInWithEmail(email.trim(), password)
+    setSession(data.session ?? null)
   }, [])
 
   const signOut = useCallback(async () => {

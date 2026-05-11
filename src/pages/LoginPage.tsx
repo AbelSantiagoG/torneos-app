@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { AuthError } from '@supabase/supabase-js'
 import { Award, Eye, EyeOff, Lock, Mail } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,27 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '@/co
 import { Checkbox } from '@/components/ui/checkbox'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/features/auth/AuthProvider'
+
+function friendlyLoginError(err: unknown): string {
+  if (err instanceof AuthError) {
+    const m = err.message.toLowerCase()
+    if (m.includes('invalid login') || m.includes('invalid_credentials')) {
+      return 'Correo o contraseña incorrectos.'
+    }
+    if (m.includes('email not confirmed')) {
+      return 'Debes confirmar tu correo antes de iniciar sesión.'
+    }
+    return err.message
+  }
+  const isFailedFetch =
+    (err instanceof TypeError && err.message === 'Failed to fetch') ||
+    (err instanceof Error && err.message === 'Failed to fetch')
+  if (isFailedFetch) {
+    return 'No se pudo conectar con Supabase. Si la consola muestra ERR_NAME_NOT_RESOLVED, el subdominio de VITE_SUPABASE_URL no existe: en Supabase abre Settings → API y copia otra vez "Project URL" (solo https://xxxx.supabase.co, sin /rest/v1). Comprueba también la anon key y ejecuta la app con npm run dev (no abras el HTML como archivo).'
+  }
+  if (err instanceof Error) return err.message
+  return 'No se pudo iniciar sesión'
+}
 
 export function LoginPage() {
   const { signIn } = useAuth()
@@ -28,8 +50,7 @@ export function LoginPage() {
       await signIn(email.trim(), password)
       toast.success('Sesión iniciada')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'No se pudo iniciar sesión'
-      toast.error(msg)
+      toast.error(friendlyLoginError(err))
     } finally {
       setSubmitting(false)
     }
