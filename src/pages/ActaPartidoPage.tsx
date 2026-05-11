@@ -1,11 +1,11 @@
-import { useState } from 'react'
-import { Save, Plus, Trash2, AlertCircle, ArrowLeft } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { Save, ArrowLeft } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -14,53 +14,116 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { PageHeader } from '@/components/common/PageHeader'
-import { 
-  partidos, 
-  getEquipoById,
-  getCategoriaById,
-  getJugadoresByEquipoId,
-  arbitros,
-} from '@/data/mockData'
+import { EmptyState } from '@/components/common/EmptyState'
+import { Skeleton } from '@/components/ui/skeleton'
 import { formatDate } from '@/lib/utils'
+import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
+import { usePartidosTorneo } from '@/features/partidos/usePartidosTorneo'
+import { getEquipoById } from '@/features/equipos/equiposService'
+import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
+import { useCategorias } from '@/features/categorias/useCategorias'
+import { supabase } from '@/lib/supabase'
+import { isJugadoEstado, isProgramadoEstado } from '@/features/partidos/partidosUi'
 
 interface ActaPartidoPageProps {
   onBack?: () => void
 }
 
 export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
-  const [selectedPartido, setSelectedPartido] = useState(partidos[0].id)
-  const [golesLocal, setGolesLocal] = useState<{ jugadorId: string; minuto: number }[]>([
-    { jugadorId: 'jug-1', minuto: 15 },
-    { jugadorId: 'jug-2', minuto: 28 },
-    { jugadorId: 'jug-1', minuto: 42 },
-  ])
-  const [golesVisitante, setGolesVisitante] = useState<{ jugadorId: string; minuto: number }[]>([
-    { jugadorId: 'jug-13', minuto: 35 },
-  ])
-  const [tarjetasLocal, setTarjetasLocal] = useState<{ jugadorId: string; tipo: 'amarilla' | 'roja'; minuto: number }[]>([
-    { jugadorId: 'jug-3', tipo: 'amarilla', minuto: 22 },
-  ])
-  const [tarjetasVisitante, setTarjetasVisitante] = useState<{ jugadorId: string; tipo: 'amarilla' | 'roja'; minuto: number }[]>([])
-  const [arbitro, setArbitro] = useState('arb-1')
-  const [notas, setNotas] = useState('')
+  const [selectedPartido, setSelectedPartido] = useState('')
 
-  const partido = partidos.find(p => p.id === selectedPartido)
-  const local = partido ? getEquipoById(partido.equipoLocalId) : null
-  const visitante = partido ? getEquipoById(partido.equipoVisitanteId) : null
-  const categoria = partido ? getCategoriaById(partido.categoriaId) : null
-  const jugadoresLocal = local ? getJugadoresByEquipoId(local.id) : []
-  const jugadoresVisitante = visitante ? getJugadoresByEquipoId(visitante.id) : []
+  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+  const torneoId = torneo?.id
+  const { data: partidos = [], isLoading: parLoading, error: parError } = usePartidosTorneo(torneoId)
+  const { data: categorias = [] } = useCategorias(torneoId)
 
-  const partidosParaRegistrar = partidos.filter(p => p.estado === 'jugado' || p.estado === 'programado').slice(0, 10)
+  const partidosLista = useMemo(
+    () => partidos.filter((p) => isJugadoEstado(p.estado) || isProgramadoEstado(p.estado)),
+    [partidos],
+  )
 
-  const totalGolesLocal = golesLocal.length
-  const totalGolesVisitante = golesVisitante.length
+  const partido = partidosLista.find((p) => p.id === selectedPartido)
+
+  const equiposQ = useQuery({
+    queryKey: ['acta-equipos', partido?.equipoLocalId, partido?.equipoVisitanteId],
+    enabled: Boolean(partido?.equipoLocalId && partido?.equipoVisitanteId),
+    queryFn: async () => {
+      const [a, b] = await Promise.all([
+        getEquipoById(partido!.equipoLocalId!),
+        getEquipoById(partido!.equipoVisitanteId!),
+      ])
+      return { local: a, visitante: b }
+    },
+  })
+
+  const jugLocalQ = useQuery({
+    queryKey: ['acta-jug-local', partido?.equipoLocalId, partido?.categoriaId],
+    enabled: Boolean(partido?.equipoLocalId && partido?.categoriaId),
+    queryFn: () => getJugadoresByEquipo(partido!.equipoLocalId!, partido!.categoriaId),
+  })
+
+  const jugVisQ = useQuery({
+    queryKey: ['acta-jug-vis', partido?.equipoVisitanteId, partido?.categoriaId],
+    enabled: Boolean(partido?.equipoVisitanteId && partido?.categoriaId),
+    queryFn: () => getJugadoresByEquipo(partido!.equipoVisitanteId!, partido!.categoriaId),
+  })
+
+  const arbitrosQ = useQuery({
+    queryKey: ['acta-arbitros', torneoId],
+    enabled: Boolean(torneoId),
+    queryFn: async () => {
+      const r = await supabase.from('arbitros').select('id, nombre_completo, nombres, apellidos').limit(200)
+      if (r.error) return [] as { id: string; label: string }[]
+      const rows = (r.data ?? []) as Record<string, unknown>[]
+      return rows.map((row) => ({
+        id: String(row.id ?? ''),
+        label: String(row.nombre_completo ?? row.nombres ?? row.id ?? ''),
+      }))
+    },
+  })
+
+  useEffect(() => {
+    if (parError) toast.error(parError instanceof Error ? parError.message : 'Error al cargar partidos')
+  }, [parError])
+
+  useEffect(() => {
+    if (partidosLista.length && !selectedPartido) setSelectedPartido(partidosLista[0]!.id)
+  }, [partidosLista, selectedPartido])
+
+  const localRow = equiposQ.data?.local
+  const visitRow = equiposQ.data?.visitante
+  const categoria = categorias.find((c) => c.id === partido?.categoriaId)
+
+  const localColor = localRow?.color ?? '#64748b'
+  const visitColor = visitRow?.color ?? '#64748b'
+  const localNombre = localRow?.nombre ?? partido?.equipoLocalNombre ?? 'Local'
+  const visitNombre = visitRow?.nombre ?? partido?.equipoVisitanteNombre ?? 'Visitante'
+  const localPh = (localRow?.sigla ?? localNombre).toString().slice(0, 2).toUpperCase()
+  const visitPh = (visitRow?.sigla ?? visitNombre).toString().slice(0, 2).toUpperCase()
+
+  if (torneoLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    )
+  }
+
+  if (!torneoId) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Acta de Partido" description="Registro de partido" />
+        <EmptyState icon={Save} title="Sin torneo activo" description="Activa un torneo para usar el acta." />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Acta de Partido"
-        description="Registra el resultado, goles, tarjetas y detalles del partido"
+        description="Selecciona un partido real del fixture. El guardado en goles/tarjetas se conectará después."
         actions={
           <div className="flex gap-2">
             {onBack && (
@@ -69,7 +132,7 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                 Volver
               </Button>
             )}
-            <Button>
+            <Button type="button" variant="secondary" disabled>
               <Save className="mr-2 h-4 w-4" />
               Guardar Acta
             </Button>
@@ -77,305 +140,158 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
         }
       />
 
-      {/* Match Selector */}
       <Card>
         <CardContent className="pt-6">
-          <Label className="text-xs text-muted-foreground mb-2 block">Seleccionar Partido</Label>
-          <Select value={selectedPartido} onValueChange={setSelectedPartido}>
-            <SelectTrigger className="w-full md:w-96">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {partidosParaRegistrar.map(p => {
-                const localTeam = getEquipoById(p.equipoLocalId)
-                const visitanteTeam = getEquipoById(p.equipoVisitanteId)
-                const cat = getCategoriaById(p.categoriaId)
-                return (
+          <Label className="mb-2 block text-xs text-muted-foreground">Seleccionar Partido</Label>
+          {parLoading ? (
+            <Skeleton className="h-10 w-96" />
+          ) : partidosLista.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay partidos programados o jugados en Supabase.</p>
+          ) : (
+            <Select value={selectedPartido} onValueChange={setSelectedPartido}>
+              <SelectTrigger className="w-full md:w-96">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {partidosLista.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     <span className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-[10px]">{cat?.nombre}</Badge>
-                      {localTeam?.nombre} vs {visitanteTeam?.nombre} - {formatDate(p.fecha)}
+                      <Badge variant="outline" className="text-[10px]">
+                        {p.categoriaNombre}
+                      </Badge>
+                      {p.equipoLocalNombre} vs {p.equipoVisitanteNombre}
+                      {p.fecha ? ` — ${formatDate(p.fecha)}` : ''}
                     </span>
                   </SelectItem>
-                )
-              })}
-            </SelectContent>
-          </Select>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </CardContent>
       </Card>
 
-      {partido && local && visitante && (
+      {partido && (
         <>
-          {/* Match Info */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Información del Partido</CardTitle>
                   <CardDescription>
-                    {formatDate(partido.fecha)} - {partido.hora} - {partido.cancha}
+                    {partido.fecha ? formatDate(partido.fecha) : 'Sin fecha'} — {partido.hora || '—'} —{' '}
+                    {partido.cancha || '—'}
                   </CardDescription>
                 </div>
-                <Badge 
-                  variant="outline"
-                  style={{ borderColor: categoria?.color, color: categoria?.color }}
-                >
-                  {categoria?.nombre}
+                <Badge variant="outline" style={{ borderColor: categoria?.color, color: categoria?.color }}>
+                  {categoria?.nombre ?? partido.categoriaNombre}
                 </Badge>
               </div>
             </CardHeader>
             <CardContent>
-              {/* Score Display */}
-              <div className="flex items-center justify-center gap-8 py-6">
-                <div className="text-center">
-                  <div 
-                    className="flex h-16 w-16 items-center justify-center rounded-lg text-white font-bold text-xl mx-auto mb-2"
-                    style={{ backgroundColor: local.color }}
-                  >
-                    {local.logoPlaceholder}
-                  </div>
-                  <p className="font-semibold">{local.nombre}</p>
-                  <p className="text-xs text-muted-foreground">Local</p>
-                </div>
-
-                <div className="flex items-center justify-center gap-4">
+              {equiposQ.isLoading ? (
+                <Skeleton className="h-32 w-full" />
+              ) : (
+                <div className="flex items-center justify-center gap-8 py-6">
                   <div className="text-center">
-                    <p className="text-5xl font-bold">{totalGolesLocal}</p>
+                    <div
+                      className="mx-auto mb-2 flex h-16 w-16 items-center justify-center rounded-lg text-xl font-bold text-white"
+                      style={{ backgroundColor: localColor }}
+                    >
+                      {localPh}
+                    </div>
+                    <p className="font-semibold">{localNombre}</p>
+                    <p className="text-xs text-muted-foreground">Local</p>
                   </div>
-                  <span className="text-2xl text-muted-foreground">-</span>
+                  <div className="flex items-center gap-4">
+                    <p className="text-5xl font-bold">{partido.golesLocal ?? '—'}</p>
+                    <span className="text-2xl text-muted-foreground">-</span>
+                    <p className="text-5xl font-bold">{partido.golesVisitante ?? '—'}</p>
+                  </div>
                   <div className="text-center">
-                    <p className="text-5xl font-bold">{totalGolesVisitante}</p>
+                    <div
+                      className="mx-auto mb-2 flex h-16 w-16 items-center justify-center rounded-lg text-xl font-bold text-white"
+                      style={{ backgroundColor: visitColor }}
+                    >
+                      {visitPh}
+                    </div>
+                    <p className="font-semibold">{visitNombre}</p>
+                    <p className="text-xs text-muted-foreground">Visitante</p>
                   </div>
                 </div>
-
-                <div className="text-center">
-                  <div 
-                    className="flex h-16 w-16 items-center justify-center rounded-lg text-white font-bold text-xl mx-auto mb-2"
-                    style={{ backgroundColor: visitante.color }}
-                  >
-                    {visitante.logoPlaceholder}
-                  </div>
-                  <p className="font-semibold">{visitante.nombre}</p>
-                  <p className="text-xs text-muted-foreground">Visitante</p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg py-2">
-                <AlertCircle className="h-4 w-4" />
-                El marcador se calcula automáticamente con los goles registrados
-              </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Goals Grid */}
           <div className="grid gap-4 lg:grid-cols-2">
-            {/* Local Goals */}
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <div 
-                      className="w-4 h-4 rounded-full"
-                      style={{ backgroundColor: local.color }}
-                    />
-                    Goles {local.nombre}
-                  </CardTitle>
-                  <Button variant="outline" size="sm">
-                    <Plus className="h-4 w-4 mr-1" />
-                    Agregar Gol
-                  </Button>
-                </div>
+                <CardTitle className="text-base">Jugadores locales</CardTitle>
+                <CardDescription>Membresía activa (jugador_equipos)</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2">
-                  {golesLocal.map((gol, idx) => {
-                    const jugador = jugadoresLocal.find(j => j.id === gol.jugadorId)
-                    return (
-                      <div key={idx} className="flex items-center gap-2 p-2 rounded bg-muted/50">
-                        <span className="text-sm font-medium min-w-[40px]">{gol.minuto}&apos;</span>
-                        <Select defaultValue={gol.jugadorId}>
-                          <SelectTrigger className="flex-1">
-                            <SelectValue>{jugador?.nombre}</SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            {jugadoresLocal.map(j => (
-                              <SelectItem key={j.id} value={j.id}>{j.nombre}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button variant="ghost" size="icon">
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    )
-                  })}
-                  {golesLocal.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No hay goles registrados
-                    </p>
-                  )}
-                </div>
+                {jugLocalQ.isLoading ? (
+                  <Skeleton className="h-24 w-full" />
+                ) : (jugLocalQ.data?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin jugadores activos en el equipo local.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {jugLocalQ.data!.map((j) => (
+                      <li key={j.id}>
+                        {j.nombre} — {j.documento}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </CardContent>
             </Card>
-
-            {/* Visitante Goals */}
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <div 
-                      className="w-4 h-4 rounded-full"
-                      style={{ backgroundColor: visitante.color }}
-                    />
-                    Goles {visitante.nombre}
-                  </CardTitle>
-                  <Button variant="outline" size="sm">
-                    <Plus className="h-4 w-4 mr-1" />
-                    Agregar Gol
-                  </Button>
-                </div>
+                <CardTitle className="text-base">Jugadores visitantes</CardTitle>
+                <CardDescription>Membresía activa (jugador_equipos)</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2">
-                  {golesVisitante.map((gol, idx) => {
-                    const jugador = jugadoresVisitante.find(j => j.id === gol.jugadorId)
-                    return (
-                      <div key={idx} className="flex items-center gap-2 p-2 rounded bg-muted/50">
-                        <span className="text-sm font-medium min-w-[40px]">{gol.minuto}&apos;</span>
-                        <Select defaultValue={gol.jugadorId}>
-                          <SelectTrigger className="flex-1">
-                            <SelectValue>{jugador?.nombre}</SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            {jugadoresVisitante.map(j => (
-                              <SelectItem key={j.id} value={j.id}>{j.nombre}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button variant="ghost" size="icon">
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    )
-                  })}
-                  {golesVisitante.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No hay goles registrados
-                    </p>
-                  )}
-                </div>
+                {jugVisQ.isLoading ? (
+                  <Skeleton className="h-24 w-full" />
+                ) : (jugVisQ.data?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin jugadores activos en el equipo visitante.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {jugVisQ.data!.map((j) => (
+                      <li key={j.id}>
+                        {j.nombre} — {j.documento}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Cards Grid */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            {/* Local Cards */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Tarjetas {local.nombre}</CardTitle>
-                  <Button variant="outline" size="sm">
-                    <Plus className="h-4 w-4 mr-1" />
-                    Agregar Tarjeta
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {tarjetasLocal.map((tarjeta, idx) => {
-                    const jugador = jugadoresLocal.find(j => j.id === tarjeta.jugadorId)
-                    return (
-                      <div key={idx} className="flex items-center gap-2 p-2 rounded bg-muted/50">
-                        <span className="text-sm font-medium min-w-[40px]">{tarjeta.minuto}&apos;</span>
-                        <Badge variant={tarjeta.tipo === 'amarilla' ? 'outline' : 'destructive'} 
-                          className={tarjeta.tipo === 'amarilla' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : ''}>
-                          {tarjeta.tipo === 'amarilla' ? 'Amarilla' : 'Roja'}
-                        </Badge>
-                        <span className="flex-1 text-sm">{jugador?.nombre}</span>
-                        <Button variant="ghost" size="icon">
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    )
-                  })}
-                  {tarjetasLocal.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No hay tarjetas registradas
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Visitante Cards */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Tarjetas {visitante.nombre}</CardTitle>
-                  <Button variant="outline" size="sm">
-                    <Plus className="h-4 w-4 mr-1" />
-                    Agregar Tarjeta
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {tarjetasVisitante.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No hay tarjetas registradas
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Referee and Notes */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Arbitraje</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Árbitro</Label>
-                  <Select value={arbitro} onValueChange={setArbitro}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {arbitros.map(a => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.nombre} - {a.escuelaArbitral}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="p-3 rounded bg-muted/50">
-                  <p className="text-xs text-muted-foreground">Escuela Arbitral</p>
-                  <p className="text-sm font-medium">
-                    {arbitros.find(a => a.id === arbitro)?.escuelaArbitral}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Notas del Partido</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  placeholder="Observaciones, incidencias, comentarios..."
-                  value={notas}
-                  onChange={(e) => setNotas(e.target.value)}
-                  className="min-h-[120px]"
-                />
-              </CardContent>
-            </Card>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Árbitro (catálogo Supabase)</CardTitle>
+            </CardHeader>
+            <CardContent className="max-w-md">
+              {arbitrosQ.isLoading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (arbitrosQ.data?.length ?? 0) === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay árbitros en la tabla arbitros (o sin permisos de lectura).</p>
+              ) : (
+                <Select disabled>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar árbitro (pendiente guardado)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {arbitrosQ.data!.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
     </div>

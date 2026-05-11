@@ -50,3 +50,12 @@ export function clearTorneoActivoStorage(): void {
     localStorage.removeItem(STORAGE_KEY)
   }
 }
+
+export type TorneoUpdateInput = Partial<
+  Pick<TorneoRow, 'nombre' | 'organizacion' | 'descripcion' | 'fecha_inicio' | 'fecha_fin' | 'logo_url'>
+>
+
+export async function updateTorneo(id: string, data: TorneoUpdateInput): Promise<TorneoRow> {
+  const result = await supabase.from('torneos').update(data).eq('id', id).select('*').single()
+  return throwOnError(result) as TorneoRow
+}

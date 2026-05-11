@@ -1,9 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/common/PageHeader'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
+import { useTorneoActivo, torneoActivoQueryKey } from '@/features/torneos/useTorneoActivo'
+import { updateTorneo } from '@/features/torneos/torneosService'
+import { useCategorias } from '@/features/categorias/useCategorias'
+import { formatCurrency } from '@/lib/utils'
 import { useCanchas } from '@/features/canchas/useCanchas'
 import { useHorarios } from '@/features/horarios/useHorarios'
 import { formatHoraUi } from '@/features/horarios/horariosService'
@@ -48,22 +52,8 @@ import {
   Building,
 } from 'lucide-react'
 
-const usuariosMock = [
-  { id: '1', nombre: 'Admin Principal', email: 'admin@torneo.com', rol: 'Administrador', estado: 'activo' },
-  { id: '2', nombre: 'Coordinador', email: 'coord@torneo.com', rol: 'Coordinador', estado: 'activo' },
-  { id: '3', nombre: 'Árbitro Jefe', email: 'arbitro@torneo.com', rol: 'Árbitro', estado: 'activo' },
-];
-
-const tarifasMock = [
-  { concepto: 'Inscripción por equipo (base)', valor: 250000 },
-  { concepto: 'Tarifa de arbitraje Sub-5/Sub-7', valor: 30000 },
-  { concepto: 'Tarifa de arbitraje Sub-9/Sub-11', valor: 35000 },
-  { concepto: 'Tarifa de arbitraje Sub-13+', valor: 40000 },
-  { concepto: 'Multa por W.O.', valor: 50000 },
-  { concepto: 'Multa por tarjeta roja', valor: 30000 },
-];
-
 export function ConfiguracionPage() {
+  const qc = useQueryClient()
   const [darkMode, setDarkMode] = useState(false)
   const [canchaDialogOpen, setCanchaDialogOpen] = useState(false)
   const [horarioDialogOpen, setHorarioDialogOpen] = useState(false)
@@ -71,6 +61,48 @@ export function ConfiguracionPage() {
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
+
+  const { data: categorias = [], isLoading: categoriasLoading } = useCategorias(torneoId)
+
+  const [torneoForm, setTorneoForm] = useState({
+    nombre: '',
+    organizacion: '',
+    descripcion: '',
+    fecha_inicio: '',
+    fecha_fin: '',
+    logo_url: '',
+  })
+
+  useEffect(() => {
+    if (!torneo) return
+    setTorneoForm({
+      nombre: torneo.nombre ?? '',
+      organizacion: torneo.organizacion ?? '',
+      descripcion: torneo.descripcion ?? '',
+      fecha_inicio: torneo.fecha_inicio ?? '',
+      fecha_fin: torneo.fecha_fin ?? '',
+      logo_url: torneo.logo_url ?? '',
+    })
+  }, [torneo])
+
+  const saveTorneo = useMutation({
+    mutationFn: async () => {
+      if (!torneoId) throw new Error('Sin torneo')
+      await updateTorneo(torneoId, {
+        nombre: torneoForm.nombre.trim(),
+        organizacion: torneoForm.organizacion.trim(),
+        descripcion: torneoForm.descripcion.trim() || null,
+        fecha_inicio: torneoForm.fecha_inicio || null,
+        fecha_fin: torneoForm.fecha_fin || null,
+        logo_url: torneoForm.logo_url.trim() || null,
+      })
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: torneoActivoQueryKey })
+      toast.success('Torneo actualizado')
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al guardar'),
+  })
 
   const {
     data: canchas = [],
@@ -257,47 +289,72 @@ export function ConfiguracionPage() {
                 </div>
               ) : (
                 <>
-                  <p className="text-sm text-muted-foreground">
-                    Datos leídos desde Supabase. La edición del torneo se conectará en una fase posterior.
-                  </p>
+                  <p className="text-sm text-muted-foreground">Datos del torneo en Supabase (tabla torneos).</p>
                   <div className="grid gap-6 md:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="nombreTorneo">Nombre del Torneo</Label>
-                      <Input id="nombreTorneo" value={torneo?.nombre ?? ''} readOnly className="bg-muted/50" />
+                      <Input
+                        id="nombreTorneo"
+                        value={torneoForm.nombre}
+                        onChange={(e) => setTorneoForm((f) => ({ ...f, nombre: e.target.value }))}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="organizacion">Organización</Label>
-                      <Input id="organizacion" value={torneo?.organizacion ?? ''} readOnly className="bg-muted/50" />
+                      <Input
+                        id="organizacion"
+                        value={torneoForm.organizacion}
+                        onChange={(e) => setTorneoForm((f) => ({ ...f, organizacion: e.target.value }))}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="fechaInicio">Fecha de Inicio</Label>
                       <Input
                         id="fechaInicio"
                         type="date"
-                        value={torneo?.fecha_inicio ?? ''}
-                        readOnly
-                        className="bg-muted/50"
+                        value={torneoForm.fecha_inicio}
+                        onChange={(e) => setTorneoForm((f) => ({ ...f, fecha_inicio: e.target.value }))}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="fechaFin">Fecha de Finalización</Label>
-                      <Input id="fechaFin" type="date" value={torneo?.fecha_fin ?? ''} readOnly className="bg-muted/50" />
+                      <Input
+                        id="fechaFin"
+                        type="date"
+                        value={torneoForm.fecha_fin}
+                        onChange={(e) => setTorneoForm((f) => ({ ...f, fecha_fin: e.target.value }))}
+                      />
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="logoUrl">URL del logo</Label>
+                    <Input
+                      id="logoUrl"
+                      value={torneoForm.logo_url}
+                      onChange={(e) => setTorneoForm((f) => ({ ...f, logo_url: e.target.value }))}
+                      placeholder="https://..."
+                    />
                   </div>
 
                   <div className="space-y-2">
                     <Label>Descripción</Label>
                     <textarea
-                      className="min-h-[100px] w-full rounded-md border bg-muted/50 px-3 py-2 text-sm"
-                      value={torneo?.descripcion ?? ''}
-                      readOnly
+                      className="min-h-[100px] w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={torneoForm.descripcion}
+                      onChange={(e) => setTorneoForm((f) => ({ ...f, descripcion: e.target.value }))}
                     />
                   </div>
                 </>
               )}
 
               <div className="flex justify-end">
-                <Button className="gap-2" type="button" disabled>
+                <Button
+                  className="gap-2"
+                  type="button"
+                  disabled={!torneoId || saveTorneo.isPending}
+                  onClick={() => void saveTorneo.mutateAsync()}
+                >
                   <Save className="h-4 w-4" />
                   Guardar Cambios
                 </Button>
@@ -313,24 +370,10 @@ export function ConfiguracionPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="telefono">Teléfono</Label>
-                  <Input id="telefono" defaultValue="+57 300 123 4567" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" defaultValue="contacto@torneo.com" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="direccion">Dirección</Label>
-                  <Input id="direccion" defaultValue="Calle 123 #45-67, Ciudad" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="web">Sitio Web</Label>
-                  <Input id="web" defaultValue="www.torneo.com" />
-                </div>
-              </div>
+              <p className="text-sm text-muted-foreground">
+                Los datos de contacto públicos no están modelados en la tabla torneos; agrégalos en Supabase o en la
+                descripción del torneo.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -506,28 +549,28 @@ export function ConfiguracionPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Duración de Partidos por Categoría</CardTitle>
+              <CardTitle>Categorías del torneo</CardTitle>
+              <CardDescription>Resumen desde Supabase; edita tarifas en la sección Categorías.</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {[
-                  { cat: 'Sub-5', duracion: '20 min (2x10)' },
-                  { cat: 'Sub-7', duracion: '30 min (2x15)' },
-                  { cat: 'Sub-9', duracion: '40 min (2x20)' },
-                  { cat: 'Sub-11', duracion: '50 min (2x25)' },
-                  { cat: 'Sub-13', duracion: '60 min (2x30)' },
-                  { cat: 'Sub-15', duracion: '70 min (2x35)' },
-                  { cat: 'Sub-17', duracion: '80 min (2x40)' },
-                ].map((item) => (
-                  <div
-                    key={item.cat}
-                    className="flex items-center justify-between rounded-lg border p-3"
-                  >
-                    <span className="font-medium">{item.cat}</span>
-                    <span className="text-muted-foreground">{item.duracion}</span>
-                  </div>
-                ))}
-              </div>
+              {categoriasLoading ? (
+                <Skeleton className="h-24 w-full" />
+              ) : categorias.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay categorías creadas.</p>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {categorias.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between rounded-lg border p-3">
+                      <span className="font-medium">{c.nombre}</span>
+                      <span className="text-right text-xs text-muted-foreground">
+                        Inscripción {formatCurrency(c.valorInscripcion)}
+                        <br />
+                        Arbitraje {formatCurrency(c.tarifaArbitraje)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -536,42 +579,36 @@ export function ConfiguracionPage() {
         <TabsContent value="tarifas" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Tarifas Generales</CardTitle>
+              <CardTitle>Tarifas por categoría</CardTitle>
               <CardDescription>
-                Configura los valores de inscripción, arbitrajes y multas
+                Los valores de inscripción y arbitraje viven en la tabla categorías. Edítalos en el módulo Categorías.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Concepto</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                    <TableHead className="text-right w-[100px]">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {tarifasMock.map((tarifa, index) => (
-                    <TableRow key={index}>
-                      <TableCell className="font-medium">{tarifa.concepto}</TableCell>
-                      <TableCell className="text-right">
-                        ${tarifa.valor.toLocaleString('es-CO')}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="icon">
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
+              {categoriasLoading ? (
+                <Skeleton className="h-40 w-full" />
+              ) : categorias.length === 0 ? (
+                <EmptyState icon={DollarSign} title="Sin categorías" description="Crea categorías para definir tarifas." />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Categoría</TableHead>
+                      <TableHead className="text-right">Inscripción</TableHead>
+                      <TableHead className="text-right">Arbitraje</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              <div className="mt-4 flex justify-end">
-                <Button variant="outline" className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Agregar Tarifa
-                </Button>
-              </div>
+                  </TableHeader>
+                  <TableBody>
+                    {categorias.map((c) => (
+                      <TableRow key={c.id}>
+                        <TableCell className="font-medium">{c.nombre}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(c.valorInscripcion)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(c.tarifaArbitraje)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -585,51 +622,19 @@ export function ConfiguracionPage() {
                   <Shield className="h-5 w-5" />
                   Usuarios y Seguridad
                 </CardTitle>
-                <CardDescription>
-                  Administra los usuarios con acceso al sistema
-                </CardDescription>
+                <CardDescription>Gestión de usuarios de la app: pendiente (no hay tabla dedicada en el esquema actual).</CardDescription>
               </div>
-              <Button onClick={() => setUsuarioDialogOpen(true)} className="gap-2">
+              <Button disabled className="gap-2">
                 <Plus className="h-4 w-4" />
                 Nuevo Usuario
               </Button>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Rol</TableHead>
-                    <TableHead>Estado</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {usuariosMock.map((usuario) => (
-                    <TableRow key={usuario.id}>
-                      <TableCell className="font-medium">{usuario.nombre}</TableCell>
-                      <TableCell>{usuario.email}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{usuario.rol}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className="bg-green-100 text-green-800">Activo</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <EmptyState
+                icon={Users}
+                title="Sin integración de usuarios"
+                description="El acceso sigue controlado por Supabase Auth. Aquí no se listan usuarios mock."
+              />
             </CardContent>
           </Card>
         </TabsContent>

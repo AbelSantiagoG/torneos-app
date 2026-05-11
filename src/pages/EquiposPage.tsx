@@ -290,7 +290,7 @@ export function EquiposPage() {
                     <Label htmlFor="teamName">Nombre del equipo</Label>
                     <Input
                       id="teamName"
-                      placeholder="Ej: Deportivo Águilas"
+                      placeholder="Nombre del equipo"
                       value={teamForm.nombre}
                       onChange={(e) => setTeamForm({ ...teamForm, nombre: e.target.value })}
                     />

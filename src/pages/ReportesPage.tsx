@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { PageHeader } from '@/components/common/PageHeader';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { PageHeader } from '@/components/common/PageHeader'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   FileText,
   Calendar,
@@ -16,93 +17,98 @@ import {
   Printer,
   FileSpreadsheet,
   BarChart3,
-} from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+} from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { EmptyState } from '@/components/common/EmptyState'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
+import { listReportesGenerados } from '@/features/reportes/reportesService'
 
-interface Reporte {
-  id: string;
-  titulo: string;
-  descripcion: string;
-  icono: React.ElementType;
-  tipo: 'inscripciones' | 'fixture' | 'posiciones' | 'finanzas' | 'arbitrajes' | 'agenda';
-  ultimaGeneracion?: string;
+interface ReporteCatalogo {
+  id: string
+  titulo: string
+  descripcion: string
+  icono: React.ElementType
+  tipo: 'inscripciones' | 'fixture' | 'posiciones' | 'finanzas' | 'arbitrajes' | 'agenda'
 }
 
-const reportes: Reporte[] = [
+const reportesCatalogo: ReporteCatalogo[] = [
   {
     id: '1',
     titulo: 'Resumen de Inscripciones',
-    descripcion: 'Lista completa de equipos inscritos por categoría con datos de contacto y estado de pago.',
+    descripcion: 'Lista de equipos inscritos por categoría y estado de pago.',
     icono: Users,
     tipo: 'inscripciones',
-    ultimaGeneracion: '2024-03-10',
   },
   {
     id: '2',
     titulo: 'Fixture Completo',
-    descripcion: 'Programación completa de todos los partidos del torneo organizados por jornada y categoría.',
+    descripcion: 'Programación de partidos por jornada y categoría.',
     icono: ClipboardList,
     tipo: 'fixture',
-    ultimaGeneracion: '2024-03-12',
   },
   {
     id: '3',
     titulo: 'Agenda por Fecha',
-    descripcion: 'Partidos programados agrupados por fecha con horarios, canchas y categorías.',
+    descripcion: 'Partidos agrupados por fecha con horarios y canchas.',
     icono: Calendar,
     tipo: 'agenda',
-    ultimaGeneracion: '2024-03-14',
   },
   {
     id: '4',
     titulo: 'Tabla de Posiciones',
-    descripcion: 'Clasificación actual de todos los equipos por categoría con estadísticas completas.',
+    descripcion: 'Clasificación por categoría según datos del torneo.',
     icono: Trophy,
     tipo: 'posiciones',
-    ultimaGeneracion: '2024-03-15',
   },
   {
     id: '5',
     titulo: 'Estado Financiero',
-    descripcion: 'Resumen de ingresos, egresos, cartera pendiente y balance general del torneo.',
+    descripcion: 'Ingresos, egresos y cartera.',
     icono: DollarSign,
     tipo: 'finanzas',
-    ultimaGeneracion: '2024-03-13',
   },
   {
     id: '6',
     titulo: 'Cuentas de Cobro',
-    descripcion: 'Detalle de pagos pendientes por equipo con fechas de vencimiento y montos.',
+    descripcion: 'Detalle de saldos por equipo.',
     icono: FileSpreadsheet,
     tipo: 'finanzas',
-    ultimaGeneracion: '2024-03-11',
   },
   {
     id: '7',
     titulo: 'Resumen de Arbitrajes',
-    descripcion: 'Control de partidos arbitrados, pagos realizados y pendientes por árbitro.',
+    descripcion: 'Partidos arbitrados y pagos.',
     icono: BarChart3,
     tipo: 'arbitrajes',
-    ultimaGeneracion: '2024-03-14',
   },
-];
+]
 
 export function ReportesPage() {
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [selectedReporte, setSelectedReporte] = useState<Reporte | null>(null);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [selectedReporte, setSelectedReporte] = useState<ReporteCatalogo | null>(null)
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
 
-  const handlePreview = (reporte: Reporte) => {
-    setSelectedReporte(reporte);
-    setPreviewOpen(true);
-  };
+  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+  const torneoId = torneo?.id
 
-  const handleExport = (reporte: Reporte) => {
-    setSelectedReporte(reporte);
-    setExportDialogOpen(true);
-  };
+  const historialQ = useQuery({
+    queryKey: ['reportes-historial', torneoId],
+    enabled: Boolean(torneoId),
+    queryFn: () => listReportesGenerados(torneoId!),
+  })
 
-  const getTipoBadgeColor = (tipo: Reporte['tipo']) => {
+  const handlePreview = (reporte: ReporteCatalogo) => {
+    setSelectedReporte(reporte)
+    setPreviewOpen(true)
+  }
+
+  const handleExport = (reporte: ReporteCatalogo) => {
+    setSelectedReporte(reporte)
+    setExportDialogOpen(true)
+  }
+
+  const getTipoBadgeColor = (tipo: ReporteCatalogo['tipo']) => {
     const colors = {
       inscripciones: 'bg-blue-100 text-blue-800',
       fixture: 'bg-green-100 text-green-800',
@@ -110,11 +116,11 @@ export function ReportesPage() {
       finanzas: 'bg-emerald-100 text-emerald-800',
       arbitrajes: 'bg-purple-100 text-purple-800',
       agenda: 'bg-cyan-100 text-cyan-800',
-    };
-    return colors[tipo];
-  };
+    }
+    return colors[tipo]
+  }
 
-  const getTipoLabel = (tipo: Reporte['tipo']) => {
+  const getTipoLabel = (tipo: ReporteCatalogo['tipo']) => {
     const labels = {
       inscripciones: 'Inscripciones',
       fixture: 'Fixture',
@@ -122,33 +128,76 @@ export function ReportesPage() {
       finanzas: 'Finanzas',
       arbitrajes: 'Arbitrajes',
       agenda: 'Agenda',
-    };
-    return labels[tipo];
-  };
+    }
+    return labels[tipo]
+  }
+
+  if (torneoLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    )
+  }
+
+  if (!torneoId) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Reportes" description="Generación y exportación" />
+        <EmptyState icon={FileText} title="Sin torneo activo" description="Activa un torneo para asociar reportes." />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Reportes"
-        description="Genera y exporta reportes del torneo en diferentes formatos"
-      />
+      <PageHeader title="Reportes" description="Plantillas de reporte; fechas solo desde reportes_generados" />
 
-      {/* Acciones rápidas */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-medium">Acciones Rápidas</CardTitle>
+          <CardTitle className="text-base font-medium">Historial en Supabase</CardTitle>
+          <CardDescription>Tabla reportes_generados (si existe y hay RLS adecuado)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {historialQ.isLoading ? (
+            <Skeleton className="h-20 w-full" />
+          ) : (historialQ.data?.length ?? 0) === 0 ? (
+            <EmptyState
+              icon={FileText}
+              title="Sin reportes generados"
+              description="Cuando existan filas en reportes_generados, verás aquí la fecha real de generación."
+            />
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {historialQ.data!.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+                  <span className="font-medium">{r.titulo || r.tipo || 'Reporte'}</span>
+                  <span className="text-muted-foreground">
+                    {r.created_at ? new Date(r.created_at).toLocaleString('es-CO') : '—'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium">Acciones rápidas</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
-            <Button variant="outline" className="gap-2">
+            <Button variant="outline" className="gap-2" disabled>
               <Printer className="h-4 w-4" />
               Imprimir Fixture
             </Button>
-            <Button variant="outline" className="gap-2">
+            <Button variant="outline" className="gap-2" disabled>
               <Download className="h-4 w-4" />
               Exportar Posiciones
             </Button>
-            <Button variant="outline" className="gap-2">
+            <Button variant="outline" className="gap-2" disabled>
               <Share2 className="h-4 w-4" />
               Compartir Agenda
             </Button>
@@ -156,10 +205,9 @@ export function ReportesPage() {
         </CardContent>
       </Card>
 
-      {/* Grid de reportes */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {reportes.map((reporte) => {
-          const Icon = reporte.icono;
+        {reportesCatalogo.map((reporte) => {
+          const Icon = reporte.icono
           return (
             <Card key={reporte.id} className="flex flex-col">
               <CardHeader className="pb-3">
@@ -172,46 +220,31 @@ export function ReportesPage() {
                   </Badge>
                 </div>
                 <CardTitle className="mt-3 text-lg">{reporte.titulo}</CardTitle>
-                <CardDescription className="text-sm">
-                  {reporte.descripcion}
-                </CardDescription>
+                <CardDescription className="text-sm">{reporte.descripcion}</CardDescription>
               </CardHeader>
               <CardContent className="mt-auto pt-0">
-                {reporte.ultimaGeneracion && (
-                  <p className="mb-3 text-xs text-muted-foreground">
-                    Última generación: {new Date(reporte.ultimaGeneracion).toLocaleDateString('es-CO')}
-                  </p>
-                )}
+                <p className="mb-3 text-xs text-muted-foreground">
+                  La exportación PDF/Excel se conectará a datos reales en una siguiente fase.
+                </p>
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 gap-1"
-                    onClick={() => handlePreview(reporte)}
-                  >
+                  <Button variant="outline" size="sm" className="flex-1 gap-1" onClick={() => handlePreview(reporte)}>
                     <Eye className="h-3.5 w-3.5" />
                     Ver
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 gap-1"
-                    onClick={() => handleExport(reporte)}
-                  >
+                  <Button variant="outline" size="sm" className="flex-1 gap-1" onClick={() => handleExport(reporte)}>
                     <Download className="h-3.5 w-3.5" />
                     Exportar
                   </Button>
-                  <Button variant="outline" size="sm" className="gap-1">
+                  <Button variant="outline" size="sm" className="gap-1" disabled>
                     <Share2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </CardContent>
             </Card>
-          );
+          )
         })}
       </div>
 
-      {/* Dialog de vista previa */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
@@ -219,76 +252,36 @@ export function ReportesPage() {
               <FileText className="h-5 w-5" />
               {selectedReporte?.titulo}
             </DialogTitle>
-            <DialogDescription>
-              Vista previa del reporte
-            </DialogDescription>
+            <DialogDescription>Vista previa (sin datos mock)</DialogDescription>
           </DialogHeader>
-          <div className="min-h-[400px] rounded-lg border bg-muted/30 p-6">
-            <div className="flex flex-col items-center justify-center space-y-4 py-12">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                <FileText className="h-8 w-8 text-primary" />
-              </div>
-              <div className="text-center">
-                <h3 className="text-lg font-medium">Vista Previa del Reporte</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  El contenido del reporte se mostrará aquí cuando esté conectado a la base de datos.
-                </p>
-              </div>
-              <div className="flex gap-3 pt-4">
-                <Button variant="outline" className="gap-2">
-                  <Printer className="h-4 w-4" />
-                  Imprimir
-                </Button>
-                <Button className="gap-2">
-                  <Download className="h-4 w-4" />
-                  Descargar PDF
-                </Button>
-              </div>
-            </div>
+          <div className="min-h-[320px] rounded-lg border bg-muted/30 p-6">
+            <EmptyState
+              icon={FileText}
+              title="Vista previa"
+              description="El contenido se generará desde Supabase cuando el motor de reportes esté conectado."
+            />
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Dialog de exportación */}
       <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Exportar Reporte</DialogTitle>
-            <DialogDescription>
-              Selecciona el formato de exportación para {selectedReporte?.titulo}
-            </DialogDescription>
+            <DialogDescription>Formato para {selectedReporte?.titulo} (pendiente)</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-4">
-            <Button variant="outline" className="justify-start gap-3 h-14">
-              <div className="flex h-8 w-8 items-center justify-center rounded bg-red-100">
-                <FileText className="h-4 w-4 text-red-600" />
-              </div>
-              <div className="text-left">
-                <div className="font-medium">PDF</div>
-                <div className="text-xs text-muted-foreground">Documento portable</div>
-              </div>
+            <Button variant="outline" className="h-14 justify-start gap-3" disabled>
+              <FileText className="h-4 w-4" />
+              PDF
             </Button>
-            <Button variant="outline" className="justify-start gap-3 h-14">
-              <div className="flex h-8 w-8 items-center justify-center rounded bg-green-100">
-                <FileSpreadsheet className="h-4 w-4 text-green-600" />
-              </div>
-              <div className="text-left">
-                <div className="font-medium">Excel</div>
-                <div className="text-xs text-muted-foreground">Hoja de cálculo editable</div>
-              </div>
-            </Button>
-            <Button variant="outline" className="justify-start gap-3 h-14">
-              <div className="flex h-8 w-8 items-center justify-center rounded bg-green-100">
-                <Share2 className="h-4 w-4 text-green-600" />
-              </div>
-              <div className="text-left">
-                <div className="font-medium">WhatsApp</div>
-                <div className="text-xs text-muted-foreground">Compartir enlace directo</div>
-              </div>
+            <Button variant="outline" className="h-14 justify-start gap-3" disabled>
+              <FileSpreadsheet className="h-4 w-4" />
+              Excel
             </Button>
           </div>
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )
 }

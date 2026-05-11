@@ -57,6 +57,7 @@ export type CategoriaInput = {
   edad_min?: number | null
   edad_max?: number | null
   color?: string | null
+  orden?: number
   valor_inscripcion: number
   tarifa_arbitraje: number
 }
@@ -98,6 +99,7 @@ export async function updateCategoria(id: string, data: Partial<CategoriaInput> 
   if (data.valor_inscripcion !== undefined) patch.valor_inscripcion = data.valor_inscripcion
   if (data.tarifa_arbitraje !== undefined) patch.tarifa_arbitraje = data.tarifa_arbitraje
   if (data.activa !== undefined) patch.activa = data.activa
+  if (data.orden !== undefined) patch.orden = data.orden
 
   const result = await supabase.from('categorias').update(patch).eq('id', id).select('*').single()
   return throwOnError(result) as CategoriaRow
@@ -108,6 +110,18 @@ export async function toggleCategoria(id: string, activa: boolean): Promise<Cate
 }
 
 export async function deleteCategoria(id: string): Promise<void> {
+  const eqRes = await supabase.from('equipos').select('id', { count: 'exact', head: true }).eq('categoria_id', id)
+  if (eqRes.error) throw new Error(eqRes.error.message)
+  if ((eqRes.count ?? 0) > 0) {
+    throw new Error('No se puede eliminar la categoría: tiene equipos asociados.')
+  }
+
+  const parRes = await supabase.from('partidos').select('id', { count: 'exact', head: true }).eq('categoria_id', id)
+  if (parRes.error) throw new Error(parRes.error.message)
+  if ((parRes.count ?? 0) > 0) {
+    throw new Error('No se puede eliminar la categoría: tiene partidos asociados.')
+  }
+
   const result = await supabase.from('categorias').delete().eq('id', id)
   if (result.error) {
     throw new Error(result.error.message)

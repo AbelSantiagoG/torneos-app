@@ -47,6 +47,31 @@ export type EquipoInput = {
   observaciones?: string | null
 }
 
+async function ensurePagoInscripcionForEquipo(equipoId: string, torneoId: string, valorInscripcion: number): Promise<void> {
+  const existing = await supabase.from('pagos_inscripcion').select('id').eq('equipo_id', equipoId).maybeSingle()
+  if (existing.error) throw new Error(existing.error.message)
+  if (existing.data) return
+
+  const valor = Number(valorInscripcion) || 0
+  const attempts: Record<string, unknown>[] = [
+    { torneo_id: torneoId, equipo_id: equipoId, valor_esperado: valor, estado: 'pendiente' },
+    { torneo_id: torneoId, equipo_id: equipoId, monto_esperado: valor, estado: 'pendiente' },
+    { torneo_id: torneoId, equipo_id: equipoId, valor_inscripcion: valor, estado: 'pendiente' },
+    { torneo_id: torneoId, equipo_id: equipoId },
+  ]
+
+  let lastMsg = ''
+  for (const payload of attempts) {
+    const ins = await supabase.from('pagos_inscripcion').insert(payload).select('id').maybeSingle()
+    if (!ins.error) return
+    lastMsg = ins.error.message
+  }
+  throw new Error(
+    lastMsg ||
+      'No se pudo crear el registro de pago de inscripción. Verifica columnas de la tabla pagos_inscripcion en Supabase.',
+  )
+}
+
 export async function createEquipo(
   torneoId: string,
   categoriaId: string,
@@ -65,7 +90,13 @@ export async function createEquipo(
     })
     .select('*')
     .single()
-  return throwOnError(result) as EquipoRow
+  const row = throwOnError(result) as EquipoRow
+
+  const catRes = await supabase.from('categorias').select('valor_inscripcion').eq('id', categoriaId).single()
+  const cat = throwOnError(catRes) as { valor_inscripcion: number }
+  await ensurePagoInscripcionForEquipo(row.id, torneoId, Number(cat.valor_inscripcion ?? 0))
+
+  return row
 }
 
 export async function updateEquipo(id: string, data: Partial<EquipoInput>): Promise<EquipoRow> {

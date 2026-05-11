@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { Printer, CheckCircle, Clock, DollarSign, Calendar, Filter } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -21,267 +22,215 @@ import {
 } from '@/components/ui/table'
 import { PageHeader } from '@/components/common/PageHeader'
 import { StatCard } from '@/components/common/StatCard'
-import { 
-  categorias, 
-  arbitrajePagos,
-  partidos,
-  arbitros,
-  getEquipoById,
-  getCategoriaById,
-  getArbitroById,
-  calcularResumenArbitrajes,
-} from '@/data/mockData'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { EmptyState } from '@/components/common/EmptyState'
+import { Skeleton } from '@/components/ui/skeleton'
+import { formatCurrency } from '@/lib/utils'
+import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
+import { useCategorias } from '@/features/categorias/useCategorias'
+import { useArbitrajes } from '@/features/arbitrajes/useArbitrajes'
+import { pickBool, pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
+import type { ArbitrajeRowUi } from '@/features/arbitrajes/arbitrajesService'
+
+function rowKeys(rows: ArbitrajeRowUi[]): string[] {
+  const first = rows[0]
+  if (!first) return []
+  return Object.keys(first).filter((k) => !['torneo_id'].includes(k)).slice(0, 12)
+}
 
 export function ArbitrajesPage() {
   const [filterCategoria, setFilterCategoria] = useState('all')
   const [filterEstado, setFilterEstado] = useState('all')
-  const [filterMes, setFilterMes] = useState('all')
 
-  const resumen = calcularResumenArbitrajes()
+  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+  const torneoId = torneo?.id
+  const { data: categorias = [] } = useCategorias(torneoId)
+  const { data, isLoading, error } = useArbitrajes(torneoId)
 
-  // Get detailed arbitraje data
-  const arbitrajeData = arbitrajePagos.map(ap => {
-    const partido = partidos.find(p => p.id === ap.partidoId)
-    const arbitro = getArbitroById(ap.arbitroId)
-    const local = partido ? getEquipoById(partido.equipoLocalId) : null
-    const visitante = partido ? getEquipoById(partido.equipoVisitanteId) : null
-    const categoria = partido ? getCategoriaById(partido.categoriaId) : null
+  useEffect(() => {
+    if (error) toast.error(error instanceof Error ? error.message : 'Error al cargar arbitrajes')
+  }, [error])
 
-    return {
-      ...ap,
-      partido,
-      arbitro,
-      local,
-      visitante,
-      categoria,
-    }
-  })
+  const lista = data?.lista ?? []
+  const resumen = data?.resumen
 
-  // Apply filters
-  const filteredData = arbitrajeData.filter(item => {
-    if (filterCategoria !== 'all' && item.categoria?.id !== filterCategoria) return false
-    if (filterEstado === 'pagado' && !item.pagado) return false
-    if (filterEstado === 'pendiente' && item.pagado) return false
-    return true
-  })
+  const keys = useMemo(() => rowKeys(lista), [lista])
 
-  // Tarifas por categoría
-  const tarifas = categorias.map(cat => ({
-    categoria: cat,
-    tarifa: cat.nombre.includes('Sub-5') || cat.nombre.includes('Sub-7') ? 50000 :
-            cat.nombre.includes('Sub-9') || cat.nombre.includes('Sub-11') ? 60000 :
-            cat.nombre.includes('Sub-13') || cat.nombre.includes('Sub-15') ? 70000 : 80000,
-  }))
+  const filtered = useMemo(() => {
+    return lista.filter((row) => {
+      const r = row as Record<string, unknown>
+      const cid = pickStr(r, 'categoria_id')
+      if (filterCategoria !== 'all' && cid && cid !== filterCategoria) return false
+      if (filterEstado === 'pagado') {
+        const p = String(r.pagado ?? r.pagada ?? '').toLowerCase()
+        if (!(p === 'true' || p === '1' || r.estado_pago === 'pagado')) return false
+      }
+      if (filterEstado === 'pendiente') {
+        const p = String(r.pagado ?? r.pagada ?? '').toLowerCase()
+        if (p === 'true' || p === '1' || r.estado_pago === 'pagado') return false
+      }
+      return true
+    })
+  }, [lista, filterCategoria, filterEstado])
+
+  if (torneoLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    )
+  }
+
+  if (!torneoId) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Arbitrajes" description="Pagos y control de arbitraje" />
+        <EmptyState icon={Calendar} title="Sin torneo activo" description="Activa un torneo para ver arbitrajes." />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Arbitrajes"
-        description="Gestión de pagos y tarifas de arbitraje"
+        description="Lista desde arbitrajes y resumen vw_resumen_arbitrajes"
         actions={
-          <Button variant="outline">
+          <Button variant="outline" disabled>
             <Printer className="mr-2 h-4 w-4" />
             Imprimir Resumen
           </Button>
         }
       />
 
-      {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-3">
+        <StatCard title="Partidos (vista)" value={resumen?.totalPartidos ?? 0} icon={Calendar} />
         <StatCard
-          title="Partidos Arbitrados"
-          value={resumen.totalPartidosArbitrados}
-          icon={Calendar}
-        />
-        <StatCard
-          title="Total Pagado"
-          value={formatCurrency(resumen.totalPagado)}
+          title="Total pagado (vista)"
+          value={formatCurrency(resumen?.totalPagado ?? 0)}
           icon={CheckCircle}
           variant="success"
         />
         <StatCard
-          title="Pendiente por Pagar"
-          value={formatCurrency(resumen.totalPendiente)}
+          title="Pendiente (vista)"
+          value={formatCurrency(resumen?.totalPendiente ?? 0)}
           icon={Clock}
           variant="warning"
         />
       </div>
 
-      {/* Tarifas */}
       <Card>
         <CardHeader>
-          <CardTitle>Tarifas de Arbitraje por Categoría</CardTitle>
-          <CardDescription>
-            Valores establecidos para pago de árbitros según categoría
-          </CardDescription>
+          <CardTitle className="flex items-center gap-2">
+            <Filter className="h-5 w-5" />
+            Filtros
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
-            {tarifas.map(({ categoria, tarifa }) => (
-              <div 
-                key={categoria.id}
-                className="flex flex-col items-center p-4 rounded-lg bg-muted/50 border"
-              >
-                <div 
-                  className="w-4 h-4 rounded-full mb-2"
-                  style={{ backgroundColor: categoria.color }}
-                />
-                <span className="text-sm font-medium">{categoria.nombre}</span>
-                <span className="text-lg font-bold text-primary mt-1">
-                  {formatCurrency(tarifa)}
-                </span>
-              </div>
-            ))}
+        <CardContent className="flex flex-wrap gap-4">
+          <div className="space-y-2">
+            <Label>Categoría</Label>
+            <Select value={filterCategoria} onValueChange={setFilterCategoria}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas</SelectItem>
+                {categorias.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.nombre}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Estado pago</Label>
+            <Select value={filterEstado} onValueChange={setFilterEstado}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="pagado">Pagado</SelectItem>
+                <SelectItem value="pendiente">Pendiente</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
 
-      {/* Filters */}
       <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end">
-            <div className="flex-1">
-              <Label className="text-xs text-muted-foreground mb-2 block">Mes</Label>
-              <Select value={filterMes} onValueChange={setFilterMes}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los meses</SelectItem>
-                  <SelectItem value="2024-03">Marzo 2024</SelectItem>
-                  <SelectItem value="2024-02">Febrero 2024</SelectItem>
-                  <SelectItem value="2024-01">Enero 2024</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex-1">
-              <Label className="text-xs text-muted-foreground mb-2 block">Categoría</Label>
-              <Select value={filterCategoria} onValueChange={setFilterCategoria}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas las categorías</SelectItem>
-                  {categorias.map(cat => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      <div className="flex items-center gap-2">
-                        <div 
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: cat.color }}
-                        />
-                        {cat.nombre}
-                      </div>
-                    </SelectItem>
+        <CardHeader>
+          <CardTitle>Detalle de arbitrajes</CardTitle>
+          <CardDescription>Columnas según la tabla / vista en Supabase</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <Skeleton className="h-48 w-full" />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={DollarSign}
+              title="Sin arbitrajes"
+              description="No hay filas en arbitrajes para este torneo, o el filtro no coincide con ningún registro."
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {keys.map((k) => (
+                      <TableHead key={k}>{k.replace(/_/g, ' ')}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((row, idx) => (
+                    <TableRow key={idx}>
+                      {keys.map((k) => {
+                        const v = (row as Record<string, unknown>)[k]
+                        const s = v == null ? '—' : typeof v === 'number' ? String(v) : String(v)
+                        return <TableCell key={k}>{s}</TableCell>
+                      })}
+                    </TableRow>
                   ))}
-                </SelectContent>
-              </Select>
+                </TableBody>
+              </Table>
             </div>
-            <div className="flex-1">
-              <Label className="text-xs text-muted-foreground mb-2 block">Estado</Label>
-              <Select value={filterEstado} onValueChange={setFilterEstado}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los estados</SelectItem>
-                  <SelectItem value="pagado">Pagados</SelectItem>
-                  <SelectItem value="pendiente">Pendientes</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button variant="outline">
-              <Filter className="mr-2 h-4 w-4" />
-              Limpiar Filtros
-            </Button>
-          </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Payments Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Historial de Arbitrajes</CardTitle>
-          <CardDescription>
-            Lista de partidos arbitrados y estado de pago
-          </CardDescription>
+          <CardTitle>Tarifas por categoría</CardTitle>
+          <CardDescription>Desde tabla categorias (tarifa_arbitraje)</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Fecha</TableHead>
-                <TableHead>Categoría</TableHead>
-                <TableHead>Partido</TableHead>
-                <TableHead>Árbitro</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredData.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">
-                    {item.partido ? formatDate(item.partido.fecha) : '-'}
-                  </TableCell>
-                  <TableCell>
-                    {item.categoria && (
-                      <Badge 
-                        variant="outline"
-                        style={{ borderColor: item.categoria.color, color: item.categoria.color }}
-                      >
-                        {item.categoria.nombre}
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {item.local && item.visitante ? (
-                        <>
-                          <span className="text-sm">{item.local.nombre}</span>
-                          <span className="text-xs text-muted-foreground">vs</span>
-                          <span className="text-sm">{item.visitante.nombre}</span>
-                        </>
-                      ) : (
-                        '-'
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div>
-                      <p className="font-medium text-sm">{item.arbitro?.nombre}</p>
-                      <p className="text-xs text-muted-foreground">{item.arbitro?.escuelaArbitral}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right font-medium">
-                    {formatCurrency(item.valor)}
-                  </TableCell>
-                  <TableCell>
-                    {item.pagado ? (
-                      <Badge variant="outline" className="text-success border-success">
-                        <CheckCircle className="mr-1 h-3 w-3" />
-                        Pagado
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-warning-foreground border-warning">
-                        <Clock className="mr-1 h-3 w-3" />
-                        Pendiente
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {!item.pagado && (
-                      <Button variant="outline" size="sm">
-                        <DollarSign className="h-3 w-3 mr-1" />
-                        Marcar Pagado
-                      </Button>
-                    )}
-                  </TableCell>
+          {categorias.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay categorías.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Categoría</TableHead>
+                  <TableHead className="text-right">Tarifa arbitraje</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {categorias.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: c.color }} />
+                        {c.nombre}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right font-medium">{formatCurrency(c.tarifaArbitraje)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
