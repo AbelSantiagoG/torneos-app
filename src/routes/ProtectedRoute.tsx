@@ -1,22 +1,39 @@
 import { Navigate, Outlet } from 'react-router-dom'
-import { useAuth } from '@/contexts/AuthContext'
+import { useAuth } from '@/features/auth/AuthProvider'
+import { Spinner } from '@/components/ui/spinner'
 
-/** Wraps protected routes; redirects to login when not authenticated (mock). */
+function AuthLoading() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <Spinner className="size-10 text-primary" />
+    </div>
+  )
+}
+
+/** Rutas protegidas: requiere sesión de Supabase. */
 export function ProtectedRoute() {
-  const { isAuthenticated } = useAuth()
+  const { session, loading } = useAuth()
 
-  if (!isAuthenticated) {
+  if (loading) {
+    return <AuthLoading />
+  }
+
+  if (!session) {
     return <Navigate to="/login" replace />
   }
 
   return <Outlet />
 }
 
-/** Wraps public-only routes (e.g. login); redirects to dashboard when already authenticated. */
+/** Rutas solo para invitados (login): redirige al dashboard si ya hay sesión. */
 export function GuestRoute() {
-  const { isAuthenticated } = useAuth()
+  const { session, loading } = useAuth()
 
-  if (isAuthenticated) {
+  if (loading) {
+    return <AuthLoading />
+  }
+
+  if (session) {
     return <Navigate to="/dashboard" replace />
   }
 
@@ -24,6 +41,11 @@ export function GuestRoute() {
 }
 
 export function RootRedirect() {
-  const { isAuthenticated } = useAuth()
-  return <Navigate to={isAuthenticated ? '/dashboard' : '/login'} replace />
+  const { session, loading } = useAuth()
+
+  if (loading) {
+    return <AuthLoading />
+  }
+
+  return <Navigate to={session ? '/dashboard' : '/login'} replace />
 }

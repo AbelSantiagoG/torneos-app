@@ -1,3 +1,5 @@
+import type { CategoriaRow, EquipoRow, TorneoRow } from '@/types/database'
+
 export interface Categoria {
   id: string
   nombre: string
@@ -7,6 +9,36 @@ export interface Categoria {
   equipos: number
   partidos: number
   valorInscripcion: number
+  tarifaArbitraje: number
+  edadMin: number | null
+  edadMax: number | null
+  orden: number
+}
+
+/** Torneo activo expuesto a la UI (desde fila Supabase). */
+export type TorneoActivo = Pick<
+  TorneoRow,
+  'id' | 'nombre' | 'organizacion' | 'logo_url' | 'fecha_inicio' | 'fecha_fin' | 'descripcion'
+>
+
+export function mapCategoriaRow(
+  row: CategoriaRow,
+  stats: { equipos: number; partidos: number },
+): Categoria {
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    rangoEdad: row.rango_edad ?? '',
+    color: row.color ?? '#22c55e',
+    activa: row.activa,
+    equipos: stats.equipos,
+    partidos: stats.partidos,
+    valorInscripcion: Number(row.valor_inscripcion),
+    tarifaArbitraje: Number(row.tarifa_arbitraje),
+    edadMin: row.edad_min,
+    edadMax: row.edad_max,
+    orden: row.orden,
+  }
 }
 
 export interface Equipo {
@@ -17,6 +49,28 @@ export interface Equipo {
   logoPlaceholder: string
   jugadores: number
   inscripcionPagada: boolean
+  /** Presente cuando el equipo viene de Supabase */
+  sigla?: string | null
+  estadoInscripcion?: EquipoRow['estado_inscripcion']
+  estadoEquipo?: EquipoRow['estado']
+  observaciones?: string | null
+}
+
+export function mapEquipoRow(row: EquipoRow, jugadoresCount: number): Equipo {
+  const sigla = row.sigla?.trim() || row.nombre.slice(0, 2).toUpperCase()
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    categoriaId: row.categoria_id,
+    color: row.color ?? '#64748b',
+    logoPlaceholder: sigla.slice(0, 2).toUpperCase(),
+    jugadores: jugadoresCount,
+    inscripcionPagada: row.estado_inscripcion === 'pagada' || row.estado_inscripcion === 'exonerada',
+    sigla: row.sigla,
+    estadoInscripcion: row.estado_inscripcion,
+    estadoEquipo: row.estado,
+    observaciones: row.observaciones,
+  }
 }
 
 export interface Jugador {

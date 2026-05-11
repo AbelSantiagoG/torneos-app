@@ -1,5 +1,7 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
-import { AuthProvider } from '@/contexts/AuthContext'
+import { Toaster } from 'sonner'
+import { AuthProvider } from '@/features/auth/AuthProvider'
 import { GuestRoute, ProtectedRoute, RootRedirect } from '@/routes/ProtectedRoute'
 import { AppLayout } from '@/layouts/AppLayout'
 import { LoginPage } from '@/pages/LoginPage'
@@ -16,6 +18,15 @@ import { FinanzasPage } from '@/pages/FinanzasPage'
 import { ReportesPage } from '@/pages/ReportesPage'
 import { ConfiguracionPage } from '@/pages/ConfiguracionPage'
 import { pathForLegacyPage } from '@/lib/appPaths'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+})
 
 function DashboardRoute() {
   const navigate = useNavigate()
@@ -64,11 +75,14 @@ function AppRoutes() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <AppRoutes />
+          <Toaster richColors closeButton position="top-right" />
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   )
 }
 

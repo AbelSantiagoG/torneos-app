@@ -1,5 +1,12 @@
-import { useState } from 'react';
-import { PageHeader } from '@/components/common/PageHeader';
+import { useState } from 'react'
+import { toast } from 'sonner'
+import { PageHeader } from '@/components/common/PageHeader'
+import { EmptyState } from '@/components/common/EmptyState'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
+import { useCanchas } from '@/features/canchas/useCanchas'
+import { useHorarios } from '@/features/horarios/useHorarios'
+import { formatHoraUi } from '@/features/horarios/horariosService'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,19 +46,7 @@ import {
   Trash2,
   Upload,
   Building,
-} from 'lucide-react';
-
-const canchasMock = [
-  { id: '1', nombre: 'Cancha Principal', ubicacion: 'Sede Central', capacidad: 200, estado: 'activa' },
-  { id: '2', nombre: 'Cancha Auxiliar 1', ubicacion: 'Sede Central', capacidad: 100, estado: 'activa' },
-  { id: '3', nombre: 'Cancha Auxiliar 2', ubicacion: 'Sede Norte', capacidad: 80, estado: 'activa' },
-  { id: '4', nombre: 'Cancha Sintética', ubicacion: 'Complejo Deportivo', capacidad: 150, estado: 'mantenimiento' },
-];
-
-const horariosMock = [
-  { id: '1', dia: 'Sábado', horaInicio: '08:00', horaFin: '18:00', intervalo: 60 },
-  { id: '2', dia: 'Domingo', horaInicio: '08:00', horaFin: '16:00', intervalo: 60 },
-];
+} from 'lucide-react'
 
 const usuariosMock = [
   { id: '1', nombre: 'Admin Principal', email: 'admin@torneo.com', rol: 'Administrador', estado: 'activo' },
@@ -69,10 +64,137 @@ const tarifasMock = [
 ];
 
 export function ConfiguracionPage() {
-  const [darkMode, setDarkMode] = useState(false);
-  const [canchaDialogOpen, setCanchaDialogOpen] = useState(false);
-  const [horarioDialogOpen, setHorarioDialogOpen] = useState(false);
-  const [usuarioDialogOpen, setUsuarioDialogOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(false)
+  const [canchaDialogOpen, setCanchaDialogOpen] = useState(false)
+  const [horarioDialogOpen, setHorarioDialogOpen] = useState(false)
+  const [usuarioDialogOpen, setUsuarioDialogOpen] = useState(false)
+
+  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+  const torneoId = torneo?.id
+
+  const {
+    data: canchas = [],
+    isLoading: canchasLoading,
+    createCancha,
+    updateCancha,
+    deleteCancha,
+    isMutating: canchasMutating,
+  } = useCanchas(torneoId)
+
+  const {
+    data: horarios = [],
+    isLoading: horariosLoading,
+    createHorario,
+    updateHorario,
+    deleteHorario,
+    isMutating: horariosMutating,
+  } = useHorarios(torneoId)
+
+  const [canchaForm, setCanchaForm] = useState({ id: undefined as string | undefined, nombre: '', ubicacion: '', activa: true })
+  const [horarioForm, setHorarioForm] = useState({ id: undefined as string | undefined, hora: '', activo: true })
+
+  const openNewCancha = () => {
+    setCanchaForm({ id: undefined, nombre: '', ubicacion: '', activa: true })
+    setCanchaDialogOpen(true)
+  }
+
+  const openEditCancha = (c: (typeof canchas)[number]) => {
+    setCanchaForm({
+      id: c.id,
+      nombre: c.nombre,
+      ubicacion: c.ubicacion ?? '',
+      activa: c.activa,
+    })
+    setCanchaDialogOpen(true)
+  }
+
+  const saveCancha = async () => {
+    if (!torneoId) {
+      toast.error('No hay torneo activo')
+      return
+    }
+    if (!canchaForm.nombre.trim()) {
+      toast.error('El nombre es obligatorio')
+      return
+    }
+    try {
+      if (canchaForm.id) {
+        await updateCancha({
+          id: canchaForm.id,
+          data: {
+            nombre: canchaForm.nombre.trim(),
+            ubicacion: canchaForm.ubicacion.trim() || null,
+            activa: canchaForm.activa,
+          },
+        })
+        toast.success('Cancha actualizada')
+      } else {
+        await createCancha({
+          nombre: canchaForm.nombre.trim(),
+          ubicacion: canchaForm.ubicacion.trim() || null,
+          activa: canchaForm.activa,
+        })
+        toast.success('Cancha creada')
+      }
+      setCanchaDialogOpen(false)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al guardar cancha')
+    }
+  }
+
+  const removeCancha = async (id: string) => {
+    try {
+      await deleteCancha(id)
+      toast.success('Cancha eliminada')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo eliminar')
+    }
+  }
+
+  const openNewHorario = () => {
+    setHorarioForm({ id: undefined, hora: '08:00', activo: true })
+    setHorarioDialogOpen(true)
+  }
+
+  const openEditHorario = (h: (typeof horarios)[number]) => {
+    setHorarioForm({ id: h.id, hora: formatHoraUi(h.hora), activo: h.activo })
+    setHorarioDialogOpen(true)
+  }
+
+  const saveHorario = async () => {
+    if (!torneoId) {
+      toast.error('No hay torneo activo')
+      return
+    }
+    if (!horarioForm.hora.trim()) {
+      toast.error('La hora es obligatoria')
+      return
+    }
+    try {
+      if (horarioForm.id) {
+        await updateHorario({
+          id: horarioForm.id,
+          data: { hora: horarioForm.hora, activo: horarioForm.activo },
+        })
+        toast.success('Horario actualizado')
+      } else {
+        await createHorario({ hora: horarioForm.hora, activo: horarioForm.activo })
+        toast.success('Horario creado')
+      }
+      setHorarioDialogOpen(false)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al guardar horario')
+    }
+  }
+
+  const removeHorario = async (id: string) => {
+    try {
+      await deleteHorario(id)
+      toast.success('Horario eliminado')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo eliminar')
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -122,63 +244,60 @@ export function ConfiguracionPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid gap-6 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="nombreTorneo">Nombre del Torneo</Label>
-                  <Input
-                    id="nombreTorneo"
-                    defaultValue="Copa Primavera 2024"
-                    placeholder="Ej: Copa Verano 2024"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="organizacion">Organización</Label>
-                  <Input
-                    id="organizacion"
-                    defaultValue="Liga Infantil de Fútbol"
-                    placeholder="Nombre de la organización"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="fechaInicio">Fecha de Inicio</Label>
-                  <Input id="fechaInicio" type="date" defaultValue="2024-03-01" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="fechaFin">Fecha de Finalización</Label>
-                  <Input id="fechaFin" type="date" defaultValue="2024-06-30" />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Logo del Torneo</Label>
-                <div className="flex items-center gap-4">
-                  <div className="flex h-24 w-24 items-center justify-center rounded-lg border-2 border-dashed bg-muted">
-                    <Trophy className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                  <div className="space-y-2">
-                    <Button variant="outline" className="gap-2">
-                      <Upload className="h-4 w-4" />
-                      Subir Logo
-                    </Button>
-                    <p className="text-xs text-muted-foreground">
-                      PNG, JPG o SVG. Máximo 2MB.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="descripcion">Descripción</Label>
-                <textarea
-                  id="descripcion"
-                  className="min-h-[100px] w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  placeholder="Descripción breve del torneo..."
-                  defaultValue="Torneo de fútbol infantil para categorías Sub-5 a Sub-17. Organizado por la Liga Infantil de Fútbol."
+              {!torneo && !torneoLoading ? (
+                <EmptyState
+                  icon={Trophy}
+                  title="Sin torneo activo"
+                  description="No hay torneo activo para mostrar datos generales."
                 />
-              </div>
+              ) : torneoLoading ? (
+                <div className="space-y-4">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Datos leídos desde Supabase. La edición del torneo se conectará en una fase posterior.
+                  </p>
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="nombreTorneo">Nombre del Torneo</Label>
+                      <Input id="nombreTorneo" value={torneo?.nombre ?? ''} readOnly className="bg-muted/50" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="organizacion">Organización</Label>
+                      <Input id="organizacion" value={torneo?.organizacion ?? ''} readOnly className="bg-muted/50" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fechaInicio">Fecha de Inicio</Label>
+                      <Input
+                        id="fechaInicio"
+                        type="date"
+                        value={torneo?.fecha_inicio ?? ''}
+                        readOnly
+                        className="bg-muted/50"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fechaFin">Fecha de Finalización</Label>
+                      <Input id="fechaFin" type="date" value={torneo?.fecha_fin ?? ''} readOnly className="bg-muted/50" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Descripción</Label>
+                    <textarea
+                      className="min-h-[100px] w-full rounded-md border bg-muted/50 px-3 py-2 text-sm"
+                      value={torneo?.descripcion ?? ''}
+                      readOnly
+                    />
+                  </div>
+                </>
+              )}
 
               <div className="flex justify-end">
-                <Button className="gap-2">
+                <Button className="gap-2" type="button" disabled>
                   <Save className="h-4 w-4" />
                   Guardar Cambios
                 </Button>
@@ -226,54 +345,78 @@ export function ConfiguracionPage() {
                   Administra las canchas donde se juegan los partidos
                 </CardDescription>
               </div>
-              <Button onClick={() => setCanchaDialogOpen(true)} className="gap-2">
+              <Button onClick={openNewCancha} className="gap-2" disabled={!torneoId || canchasMutating}>
                 <Plus className="h-4 w-4" />
                 Nueva Cancha
               </Button>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead>Ubicación</TableHead>
-                    <TableHead>Capacidad</TableHead>
-                    <TableHead>Estado</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {canchasMock.map((cancha) => (
-                    <TableRow key={cancha.id}>
-                      <TableCell className="font-medium">{cancha.nombre}</TableCell>
-                      <TableCell>{cancha.ubicacion}</TableCell>
-                      <TableCell>{cancha.capacidad} personas</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={cancha.estado === 'activa' ? 'default' : 'secondary'}
-                          className={
-                            cancha.estado === 'activa'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }
-                        >
-                          {cancha.estado === 'activa' ? 'Activa' : 'Mantenimiento'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+              {!torneoId ? (
+                <EmptyState icon={MapPin} title="Sin torneo" description="Activa un torneo para gestionar canchas." />
+              ) : canchasLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
                   ))}
-                </TableBody>
-              </Table>
+                </div>
+              ) : canchas.length === 0 ? (
+                <EmptyState
+                  icon={MapPin}
+                  title="Sin canchas"
+                  description="Agrega la primera cancha del torneo."
+                  action={
+                    <Button onClick={openNewCancha}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Nueva cancha
+                    </Button>
+                  }
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Ubicación</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {canchas.map((cancha) => (
+                      <TableRow key={cancha.id}>
+                        <TableCell className="font-medium">{cancha.nombre}</TableCell>
+                        <TableCell>{cancha.ubicacion ?? '—'}</TableCell>
+                        <TableCell>
+                          <Badge variant={cancha.activa ? 'default' : 'secondary'}>
+                            {cancha.activa ? 'Activa' : 'Inactiva'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditCancha(cancha)}
+                              disabled={canchasMutating}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              onClick={() => void removeCancha(cancha.id)}
+                              disabled={canchasMutating}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -288,43 +431,76 @@ export function ConfiguracionPage() {
                   Define los horarios disponibles para programar partidos
                 </CardDescription>
               </div>
-              <Button onClick={() => setHorarioDialogOpen(true)} className="gap-2">
+              <Button onClick={openNewHorario} className="gap-2" disabled={!torneoId || horariosMutating}>
                 <Plus className="h-4 w-4" />
                 Nuevo Horario
               </Button>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Día</TableHead>
-                    <TableHead>Hora Inicio</TableHead>
-                    <TableHead>Hora Fin</TableHead>
-                    <TableHead>Intervalo</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {horariosMock.map((horario) => (
-                    <TableRow key={horario.id}>
-                      <TableCell className="font-medium">{horario.dia}</TableCell>
-                      <TableCell>{horario.horaInicio}</TableCell>
-                      <TableCell>{horario.horaFin}</TableCell>
-                      <TableCell>{horario.intervalo} minutos</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+              {!torneoId ? (
+                <EmptyState icon={Clock} title="Sin torneo" description="Activa un torneo para gestionar horarios." />
+              ) : horariosLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
                   ))}
-                </TableBody>
-              </Table>
+                </div>
+              ) : horarios.length === 0 ? (
+                <EmptyState
+                  icon={Clock}
+                  title="Sin horarios"
+                  description="Los horarios en la base son franjas horarias (hora del día) disponibles para programar."
+                  action={
+                    <Button onClick={openNewHorario}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Nuevo horario
+                    </Button>
+                  }
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Hora</TableHead>
+                      <TableHead>Activo</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {horarios.map((horario) => (
+                      <TableRow key={horario.id}>
+                        <TableCell className="font-medium">{formatHoraUi(horario.hora)}</TableCell>
+                        <TableCell>
+                          <Badge variant={horario.activo ? 'default' : 'secondary'}>
+                            {horario.activo ? 'Sí' : 'No'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditHorario(horario)}
+                              disabled={horariosMutating}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              onClick={() => void removeHorario(horario.id)}
+                              disabled={horariosMutating}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
 
@@ -512,30 +688,43 @@ export function ConfiguracionPage() {
       <Dialog open={canchaDialogOpen} onOpenChange={setCanchaDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Nueva Cancha</DialogTitle>
-            <DialogDescription>
-              Agrega una nueva cancha al sistema
-            </DialogDescription>
+            <DialogTitle>{canchaForm.id ? 'Editar cancha' : 'Nueva cancha'}</DialogTitle>
+            <DialogDescription>Datos de la cancha en el torneo activo</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="nombreCancha">Nombre</Label>
-              <Input id="nombreCancha" placeholder="Ej: Cancha Principal" />
+              <Input
+                id="nombreCancha"
+                placeholder="Ej: Cancha Principal"
+                value={canchaForm.nombre}
+                onChange={(e) => setCanchaForm({ ...canchaForm, nombre: e.target.value })}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="ubicacionCancha">Ubicación</Label>
-              <Input id="ubicacionCancha" placeholder="Ej: Sede Central" />
+              <Input
+                id="ubicacionCancha"
+                placeholder="Ej: Sede Central"
+                value={canchaForm.ubicacion}
+                onChange={(e) => setCanchaForm({ ...canchaForm, ubicacion: e.target.value })}
+              />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="capacidadCancha">Capacidad</Label>
-              <Input id="capacidadCancha" type="number" placeholder="100" />
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <p className="text-sm font-medium">Activa</p>
+                <p className="text-xs text-muted-foreground">Disponible para programación</p>
+              </div>
+              <Switch checked={canchaForm.activa} onCheckedChange={(v) => setCanchaForm({ ...canchaForm, activa: v })} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCanchaDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={() => setCanchaDialogOpen(false)}>Guardar</Button>
+            <Button onClick={() => void saveCancha()} disabled={canchasMutating}>
+              Guardar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -544,32 +733,36 @@ export function ConfiguracionPage() {
       <Dialog open={horarioDialogOpen} onOpenChange={setHorarioDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Nuevo Horario</DialogTitle>
+            <DialogTitle>{horarioForm.id ? 'Editar horario' : 'Nuevo horario'}</DialogTitle>
             <DialogDescription>
-              Define un nuevo horario para programar partidos
+              Franja horaria disponible (coincide con el campo <code className="text-xs">hora</code> en Supabase).
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="diaHorario">Día</Label>
-              <Input id="diaHorario" placeholder="Ej: Sábado" />
+              <Label htmlFor="horaFranja">Hora</Label>
+              <Input
+                id="horaFranja"
+                type="time"
+                value={horarioForm.hora}
+                onChange={(e) => setHorarioForm({ ...horarioForm, hora: e.target.value })}
+              />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="horaInicio">Hora Inicio</Label>
-                <Input id="horaInicio" type="time" />
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <p className="text-sm font-medium">Activo</p>
+                <p className="text-xs text-muted-foreground">Se muestra en listas de programación</p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="horaFin">Hora Fin</Label>
-                <Input id="horaFin" type="time" />
-              </div>
+              <Switch checked={horarioForm.activo} onCheckedChange={(v) => setHorarioForm({ ...horarioForm, activo: v })} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setHorarioDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={() => setHorarioDialogOpen(false)}>Guardar</Button>
+            <Button onClick={() => void saveHorario()} disabled={horariosMutating}>
+              Guardar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 
 interface SidebarProps {
   collapsed: boolean
@@ -45,6 +46,10 @@ const menuItems = [
 export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   const location = useLocation()
   const navigate = useNavigate()
+  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+
+  const tituloTorneo = torneo?.nombre ?? (torneoLoading ? '…' : 'Torneo')
+  const subtituloOrg = torneo?.organizacion ?? ''
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -65,9 +70,9 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
               <Award className="h-5 w-5" />
             </div>
             {!collapsed && (
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold">Gestión de</span>
-                <span className="text-xs text-sidebar-muted">Torneos</span>
+              <div className="min-w-0 flex flex-col">
+                <span className="truncate text-sm font-semibold leading-tight">{tituloTorneo}</span>
+                <span className="truncate text-xs text-sidebar-muted">{subtituloOrg || 'Competición'}</span>
               </div>
             )}
           </div>

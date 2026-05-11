@@ -14,13 +14,13 @@ import type {
 } from '../types/torneo'
 
 export const categorias: Categoria[] = [
-  { id: 'cat-1', nombre: 'Sub-5', rangoEdad: '4-5 años', color: '#22c55e', activa: true, equipos: 8, partidos: 28, valorInscripcion: 150000 },
-  { id: 'cat-2', nombre: 'Sub-7', rangoEdad: '6-7 años', color: '#3b82f6', activa: true, equipos: 10, partidos: 45, valorInscripcion: 180000 },
-  { id: 'cat-3', nombre: 'Sub-9', rangoEdad: '8-9 años', color: '#f59e0b', activa: true, equipos: 12, partidos: 66, valorInscripcion: 200000 },
-  { id: 'cat-4', nombre: 'Sub-11', rangoEdad: '10-11 años', color: '#ef4444', activa: true, equipos: 10, partidos: 45, valorInscripcion: 220000 },
-  { id: 'cat-5', nombre: 'Sub-13', rangoEdad: '12-13 años', color: '#8b5cf6', activa: true, equipos: 8, partidos: 28, valorInscripcion: 250000 },
-  { id: 'cat-6', nombre: 'Sub-15', rangoEdad: '14-15 años', color: '#06b6d4', activa: true, equipos: 6, partidos: 15, valorInscripcion: 280000 },
-  { id: 'cat-7', nombre: 'Sub-17', rangoEdad: '16-17 años', color: '#ec4899', activa: false, equipos: 4, partidos: 6, valorInscripcion: 300000 },
+  { id: 'cat-1', nombre: 'Sub-5', rangoEdad: '4-5 años', color: '#22c55e', activa: true, equipos: 8, partidos: 28, valorInscripcion: 150000, tarifaArbitraje: 30000, edadMin: null, edadMax: null, orden: 0 },
+  { id: 'cat-2', nombre: 'Sub-7', rangoEdad: '6-7 años', color: '#3b82f6', activa: true, equipos: 10, partidos: 45, valorInscripcion: 180000, tarifaArbitraje: 30000, edadMin: null, edadMax: null, orden: 1 },
+  { id: 'cat-3', nombre: 'Sub-9', rangoEdad: '8-9 años', color: '#f59e0b', activa: true, equipos: 12, partidos: 66, valorInscripcion: 200000, tarifaArbitraje: 35000, edadMin: null, edadMax: null, orden: 2 },
+  { id: 'cat-4', nombre: 'Sub-11', rangoEdad: '10-11 años', color: '#ef4444', activa: true, equipos: 10, partidos: 45, valorInscripcion: 220000, tarifaArbitraje: 35000, edadMin: null, edadMax: null, orden: 3 },
+  { id: 'cat-5', nombre: 'Sub-13', rangoEdad: '12-13 años', color: '#8b5cf6', activa: true, equipos: 8, partidos: 28, valorInscripcion: 250000, tarifaArbitraje: 40000, edadMin: null, edadMax: null, orden: 4 },
+  { id: 'cat-6', nombre: 'Sub-15', rangoEdad: '14-15 años', color: '#06b6d4', activa: true, equipos: 6, partidos: 15, valorInscripcion: 280000, tarifaArbitraje: 40000, edadMin: null, edadMax: null, orden: 5 },
+  { id: 'cat-7', nombre: 'Sub-17', rangoEdad: '16-17 años', color: '#ec4899', activa: false, equipos: 4, partidos: 6, valorInscripcion: 300000, tarifaArbitraje: 40000, edadMin: null, edadMax: null, orden: 6 },
 ]
 
 export const equipos: Equipo[] = [

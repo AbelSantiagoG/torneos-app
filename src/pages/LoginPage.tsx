@@ -1,37 +1,44 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { Award, Eye, EyeOff, Lock, Mail } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { useAuth } from '@/contexts/AuthContext'
+import { Spinner } from '@/components/ui/spinner'
+import { useAuth } from '@/features/auth/AuthProvider'
 
 export function LoginPage() {
-  const navigate = useNavigate()
-  const { login } = useAuth()
+  const { signIn } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    login()
-    navigate('/dashboard', { replace: true })
+    if (!email.trim() || !password) {
+      toast.error('Ingresa correo y contraseña')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await signIn(email.trim(), password)
+      toast.success('Sesión iniciada')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'No se pudo iniciar sesión'
+      toast.error(msg)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <div className="relative isolate flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-12 sm:px-6 sm:py-16">
-      {/* Athletic gradient + subtle pitch grid */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        aria-hidden
-      >
-        <div
-          className="absolute inset-0 bg-[linear-gradient(145deg,oklch(0.22_0.08_250)_0%,oklch(0.28_0.12_155)_45%,oklch(0.2_0.06_250)_100%)]"
-        />
+      <div className="pointer-events-none absolute inset-0" aria-hidden>
+        <div className="absolute inset-0 bg-[linear-gradient(145deg,oklch(0.22_0.08_250)_0%,oklch(0.28_0.12_155)_45%,oklch(0.2_0.06_250)_100%)]" />
         <div
           className="absolute inset-0 opacity-[0.07]"
           style={{
@@ -42,9 +49,7 @@ export function LoginPage() {
             backgroundSize: '56px 56px',
           }}
         />
-        <div
-          className="absolute left-1/2 top-1/2 h-[min(88vh,820px)] w-[min(92vw,1100px)] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10 opacity-40"
-        />
+        <div className="absolute left-1/2 top-1/2 h-[min(88vh,820px)] w-[min(92vw,1100px)] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10 opacity-40" />
         <div className="absolute inset-x-0 top-0 h-px bg-white/15" />
         <div className="absolute inset-x-0 bottom-0 h-px bg-white/10" />
       </div>
@@ -63,7 +68,7 @@ export function LoginPage() {
                 Gestión de torneos
               </h1>
               <CardDescription className="mx-auto max-w-md text-base leading-relaxed text-muted-foreground">
-                Ingresa con tu correo o usuario para administrar categorías, fixture y actas en un solo lugar.
+                Ingresa con tu correo para administrar categorías, equipos y configuración en un solo lugar.
               </CardDescription>
             </div>
           </CardHeader>
@@ -72,18 +77,19 @@ export function LoginPage() {
             <CardContent className="space-y-5 px-6 pb-2 sm:px-10">
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-sm font-medium">
-                  Correo electrónico o usuario
+                  Correo electrónico
                 </Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="email"
-                    type="text"
-                    autoComplete="username"
+                    type="email"
+                    autoComplete="email"
                     placeholder="admin@torneo.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="h-11 pl-10"
+                    disabled={submitting}
                   />
                 </div>
               </div>
@@ -102,6 +108,7 @@ export function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="h-11 pl-10 pr-11"
+                    disabled={submitting}
                   />
                   <Button
                     type="button"
@@ -121,6 +128,7 @@ export function LoginPage() {
                     id="remember"
                     checked={rememberMe}
                     onCheckedChange={(checked) => setRememberMe(checked === true)}
+                    disabled={submitting}
                   />
                   <Label htmlFor="remember" className="cursor-pointer text-sm font-normal text-muted-foreground">
                     Recordarme
@@ -133,12 +141,15 @@ export function LoginPage() {
             </CardContent>
 
             <CardFooter className="flex flex-col gap-5 px-6 pb-10 pt-2 sm:px-10 sm:pb-12">
-              <Button
-                type="submit"
-                size="lg"
-                className="h-12 w-full text-base font-semibold shadow-md shadow-primary/25 transition hover:shadow-lg hover:shadow-primary/30"
-              >
-                Ingresar
+              <Button type="submit" size="lg" className="h-12 w-full text-base font-semibold shadow-md shadow-primary/25 transition hover:shadow-lg hover:shadow-primary/30" disabled={submitting}>
+                {submitting ? (
+                  <>
+                    <Spinner className="mr-2 size-5" />
+                    Ingresando…
+                  </>
+                ) : (
+                  'Ingresar'
+                )}
               </Button>
               <p className="text-center text-xs leading-relaxed text-muted-foreground">
                 Sistema privado. El acceso no autorizado está prohibido.
@@ -147,9 +158,7 @@ export function LoginPage() {
           </form>
         </Card>
 
-        <p className="mt-8 text-center text-xs text-white/45">
-          Sistema de Gestión de Torneos · Liga Infantil de Fútbol
-        </p>
+        <p className="mt-8 text-center text-xs text-white/45">Sistema de Gestión de Torneos · Liga Infantil de Fútbol</p>
       </div>
     </div>
   )
