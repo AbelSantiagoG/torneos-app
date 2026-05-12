@@ -23,7 +23,7 @@ import { getEquipoById } from '@/features/equipos/equiposService'
 import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
 import { useCategorias } from '@/features/categorias/useCategorias'
 import { supabase } from '@/lib/supabase'
-import { isJugadoEstado, isProgramadoEstado } from '@/features/partidos/partidosUi'
+import { isJugadoEstado } from '@/features/partidos/partidosUi'
 
 interface ActaPartidoPageProps {
   onBack?: () => void
@@ -34,13 +34,16 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
-  const { data: partidos = [], isLoading: parLoading, error: parError } = usePartidosTorneo(torneoId)
-  const { data: categorias = [] } = useCategorias(torneoId)
+  const { data: bundle, isLoading: parLoading, error: parError } = usePartidosTorneo(torneoId)
 
-  const partidosLista = useMemo(
-    () => partidos.filter((p) => isJugadoEstado(p.estado) || isProgramadoEstado(p.estado)),
-    [partidos],
-  )
+  const partidosLista = useMemo(() => {
+    const programados = bundle?.programados ?? []
+    const fix = bundle?.fixture ?? []
+    const progIds = new Set(programados.map((p) => p.id))
+    return fix.filter((p) => progIds.has(p.id) || isJugadoEstado(p.estado))
+  }, [bundle])
+
+  const { data: categorias = [] } = useCategorias(torneoId)
 
   const partido = partidosLista.find((p) => p.id === selectedPartido)
 

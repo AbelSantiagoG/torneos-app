@@ -34,17 +34,34 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { CrearTorneoDialog } from '@/components/torneos/CrearTorneoDialog'
 import { PageHeader } from '@/components/common/PageHeader'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { formatCurrency } from '@/lib/utils'
+import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias } from '@/features/categorias/useCategorias'
-import type { Categoria } from '@/types/torneo'
+import type { Categoria, FormatoCompetenciaUi } from '@/types/torneo'
+
+const FORMATO_LABELS: Record<FormatoCompetenciaUi, string> = {
+  todos_contra_todos: 'Todos contra todos',
+  fase_grupos: 'Fase de grupos',
+  eliminatoria: 'Eliminatoria',
+}
 
 export function CategoriasPage() {
-  const { data: torneo, isLoading: torneoLoading, error: torneoError } = useTorneoActivo()
+  const { data: torneo, isLoading: torneoLoading, error: torneoError, torneos } = useTorneoActivo()
   const torneoId = torneo?.id
+
+  const [crearTorneoOpen, setCrearTorneoOpen] = useState(false)
 
   const {
     data: categorias = [],
@@ -67,6 +84,7 @@ export function CategoriasPage() {
     tarifaArbitraje: 0,
     edadMin: '' as string,
     edadMax: '' as string,
+    formato: 'todos_contra_todos' as FormatoCompetenciaUi,
   })
 
   useEffect(() => {
@@ -92,6 +110,7 @@ export function CategoriasPage() {
         tarifaArbitraje: categoria.tarifaArbitraje,
         edadMin: categoria.edadMin != null ? String(categoria.edadMin) : '',
         edadMax: categoria.edadMax != null ? String(categoria.edadMax) : '',
+        formato: categoria.formato ?? 'todos_contra_todos',
       })
     } else {
       setEditingCategoria(null)
@@ -103,6 +122,7 @@ export function CategoriasPage() {
         tarifaArbitraje: 0,
         edadMin: '',
         edadMax: '',
+        formato: 'todos_contra_todos',
       })
     }
     setIsDialogOpen(true)
@@ -117,17 +137,37 @@ export function CategoriasPage() {
       toast.error('El nombre de la categoría es obligatorio')
       return
     }
-    const edadMin = formData.edadMin.trim() ? Number(formData.edadMin) : null
-    const edadMax = formData.edadMax.trim() ? Number(formData.edadMax) : null
-    if (formData.edadMin.trim() && Number.isNaN(edadMin)) {
-      toast.error('Edad mínima inválida')
+    if (!formData.edadMin.trim() || !formData.edadMax.trim()) {
+      toast.error('La edad mínima y la edad máxima son obligatorias.')
       return
     }
-    if (formData.edadMax.trim() && Number.isNaN(edadMax)) {
-      toast.error('Edad máxima inválida')
+    const edadMin = Number(formData.edadMin)
+    const edadMax = Number(formData.edadMax)
+    if (Number.isNaN(edadMin) || Number.isNaN(edadMax)) {
+      toast.error('Las edades deben ser números válidos.')
       return
     }
-
+    if (edadMin > edadMax) {
+      toast.error('La edad mínima no puede ser mayor que la edad máxima.')
+      return
+    }
+    if (!formData.color?.trim()) {
+      toast.error('El color es obligatorio.')
+      return
+    }
+    if (Number.isNaN(formData.valorInscripcion) || formData.valorInscripcion < 0) {
+      toast.error('El valor de inscripción es obligatorio y debe ser un número válido.')
+      return
+    }
+    if (Number.isNaN(formData.tarifaArbitraje) || formData.tarifaArbitraje < 0) {
+      toast.error('La tarifa de arbitraje es obligatoria (puede ser 0).')
+      return
+    }
+    const formatoKeys: FormatoCompetenciaUi[] = ['todos_contra_todos', 'fase_grupos', 'eliminatoria']
+    if (!formatoKeys.includes(formData.formato)) {
+      toast.error('Selecciona un formato de competencia válido.')
+      return
+    }
     try {
       if (editingCategoria) {
         await updateCategoria({
@@ -140,6 +180,7 @@ export function CategoriasPage() {
             tarifa_arbitraje: formData.tarifaArbitraje,
             edad_min: edadMin,
             edad_max: edadMax,
+            formato: formData.formato,
           },
         })
         toast.success('Categoría actualizada')
@@ -152,12 +193,13 @@ export function CategoriasPage() {
           tarifa_arbitraje: formData.tarifaArbitraje,
           edad_min: edadMin,
           edad_max: edadMax,
+          formato: formData.formato,
         })
         toast.success('Categoría creada')
       }
       setIsDialogOpen(false)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al guardar')
+      toast.error(translateUserError(e, 'categoria'))
     }
   }
 
@@ -166,7 +208,7 @@ export function CategoriasPage() {
       await toggleCategoria({ id: c.id, activa: !c.activa })
       toast.success(c.activa ? 'Categoría desactivada' : 'Categoría activada')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al cambiar estado')
+      toast.error(translateUserError(e, 'categoria'))
     }
   }
 
@@ -175,11 +217,31 @@ export function CategoriasPage() {
       await deleteCategoria(c.id)
       toast.success('Categoría eliminada')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'No se pudo eliminar (¿hay equipos asociados?)')
+      toast.error(translateUserError(e, 'categoria'))
     }
   }
 
   const loading = torneoLoading || catLoading
+
+  if (!torneoLoading && torneos.length === 0) {
+    return (
+      <div className="space-y-6">
+        <CrearTorneoDialog open={crearTorneoOpen} onOpenChange={setCrearTorneoOpen} />
+        <PageHeader title="Categorías" description="Gestiona las categorías del torneo por rango de edad" />
+        <EmptyState
+          icon={Trophy}
+          title="Crea tu primer torneo"
+          description="Necesitas al menos un torneo para administrar categorías."
+          action={
+            <Button type="button" onClick={() => setCrearTorneoOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Nuevo torneo
+            </Button>
+          }
+        />
+      </div>
+    )
+  }
 
   if (!torneoLoading && !torneo) {
     return (
@@ -196,6 +258,7 @@ export function CategoriasPage() {
 
   return (
     <div className="space-y-6">
+      <CrearTorneoDialog open={crearTorneoOpen} onOpenChange={setCrearTorneoOpen} />
       <PageHeader
         title="Categorías"
         description="Gestiona las categorías del torneo por rango de edad"
@@ -235,7 +298,7 @@ export function CategoriasPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="edadMin">Edad mínima (opcional)</Label>
+                    <Label htmlFor="edadMin">Edad mínima</Label>
                     <Input
                       id="edadMin"
                       type="number"
@@ -244,7 +307,7 @@ export function CategoriasPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="edadMax">Edad máxima (opcional)</Label>
+                    <Label htmlFor="edadMax">Edad máxima</Label>
                     <Input
                       id="edadMax"
                       type="number"
@@ -289,6 +352,26 @@ export function CategoriasPage() {
                     value={formData.tarifaArbitraje}
                     onChange={(e) => setFormData({ ...formData, tarifaArbitraje: Number(e.target.value) })}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="formato">Formato de competencia</Label>
+                  <Select
+                    value={formData.formato}
+                    onValueChange={(v) =>
+                      setFormData({ ...formData, formato: v as FormatoCompetenciaUi })
+                    }
+                  >
+                    <SelectTrigger id="formato" className="w-full">
+                      <SelectValue placeholder="Selecciona formato" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos_contra_todos">
+                        {FORMATO_LABELS.todos_contra_todos}
+                      </SelectItem>
+                      <SelectItem value="fase_grupos">{FORMATO_LABELS.fase_grupos}</SelectItem>
+                      <SelectItem value="eliminatoria">{FORMATO_LABELS.eliminatoria}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               <DialogFooter>
@@ -360,11 +443,11 @@ export function CategoriasPage() {
             <EmptyState
               icon={Layers}
               title="Sin categorías"
-              description="Aún no hay categorías para este torneo. Crea la primera con el botón superior."
+              description="Este torneo aún no tiene categorías. Crea la primera para empezar a registrar equipos y partidos."
               action={
                 <Button onClick={() => handleOpenDialog()}>
                   <Plus className="mr-2 h-4 w-4" />
-                  Nueva categoría
+                  Crear primera categoría
                 </Button>
               }
             />
@@ -374,6 +457,7 @@ export function CategoriasPage() {
                 <TableRow>
                   <TableHead>Categoría</TableHead>
                   <TableHead>Rango de Edad</TableHead>
+                  <TableHead>Formato</TableHead>
                   <TableHead>Color</TableHead>
                   <TableHead>Valor Inscripción</TableHead>
                   <TableHead className="text-center">Equipos</TableHead>
@@ -387,6 +471,7 @@ export function CategoriasPage() {
                   <TableRow key={categoria.id}>
                     <TableCell className="font-medium">{categoria.nombre}</TableCell>
                     <TableCell>{categoria.rangoEdad || '—'}</TableCell>
+                    <TableCell>{FORMATO_LABELS[categoria.formato] ?? categoria.formato}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <div className="h-4 w-4 rounded-full border" style={{ backgroundColor: categoria.color }} />

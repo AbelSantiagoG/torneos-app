@@ -5,8 +5,10 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTorneoActivo, torneoActivoQueryKey } from '@/features/torneos/useTorneoActivo'
-import { updateTorneo } from '@/features/torneos/torneosService'
+import { invalidateTorneoQueries, torneosListQueryKey } from '@/features/torneos/TorneoProvider'
+import { deleteTorneo, getTorneos, updateTorneo } from '@/features/torneos/torneosService'
 import { useCategorias } from '@/features/categorias/useCategorias'
+import { translateUserError } from '@/lib/errorMessages'
 import { formatCurrency } from '@/lib/utils'
 import { useCanchas } from '@/features/canchas/useCanchas'
 import { useHorarios } from '@/features/horarios/useHorarios'
@@ -59,7 +61,7 @@ export function ConfiguracionPage() {
   const [horarioDialogOpen, setHorarioDialogOpen] = useState(false)
   const [usuarioDialogOpen, setUsuarioDialogOpen] = useState(false)
 
-  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+  const { data: torneo, isLoading: torneoLoading, torneos, setTorneoId } = useTorneoActivo()
   const torneoId = torneo?.id
 
   const { data: categorias = [], isLoading: categoriasLoading } = useCategorias(torneoId)
@@ -102,6 +104,21 @@ export function ConfiguracionPage() {
       toast.success('Torneo actualizado')
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al guardar'),
+  })
+
+  const deleteTorneoMut = useMutation({
+    mutationFn: async () => {
+      if (!torneoId) throw new Error('Sin torneo')
+      await deleteTorneo(torneoId)
+    },
+    onSuccess: async () => {
+      invalidateTorneoQueries(qc)
+      await qc.invalidateQueries({ queryKey: torneosListQueryKey })
+      const list = await getTorneos()
+      if (list[0]) setTorneoId(list[0].id)
+      toast.success('Torneo eliminado')
+    },
+    onError: (e) => toast.error(translateUserError(e, 'torneo')),
   })
 
   const {
@@ -348,7 +365,7 @@ export function ConfiguracionPage() {
                 </>
               )}
 
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-end gap-2">
                 <Button
                   className="gap-2"
                   type="button"
@@ -357,6 +374,23 @@ export function ConfiguracionPage() {
                 >
                   <Save className="h-4 w-4" />
                   Guardar Cambios
+                </Button>
+                <Button
+                  variant="destructive"
+                  type="button"
+                  disabled={!torneoId || deleteTorneoMut.isPending}
+                  onClick={() => {
+                    if (
+                      !confirm(
+                        '¿Eliminar este torneo y todos sus datos (categorías, equipos, partidos, finanzas)? Esta acción no se puede deshacer.',
+                      )
+                    )
+                      return
+                    void deleteTorneoMut.mutateAsync()
+                  }}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Eliminar torneo
                 </Button>
               </div>
             </CardContent>

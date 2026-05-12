@@ -1,5 +1,7 @@
 import type { CategoriaRow, EquipoRow, TorneoRow } from '@/types/database'
 
+export type FormatoCompetenciaUi = CategoriaRow['formato']
+
 export interface Categoria {
   id: string
   nombre: string
@@ -13,12 +15,13 @@ export interface Categoria {
   edadMin: number | null
   edadMax: number | null
   orden: number
+  formato: FormatoCompetenciaUi
 }
 
 /** Torneo activo expuesto a la UI (desde fila Supabase). */
 export type TorneoActivo = Pick<
   TorneoRow,
-  'id' | 'nombre' | 'organizacion' | 'logo_url' | 'fecha_inicio' | 'fecha_fin' | 'descripcion'
+  'id' | 'nombre' | 'organizacion' | 'logo_url' | 'logo_public_id' | 'fecha_inicio' | 'fecha_fin' | 'descripcion'
 >
 
 export function mapCategoriaRow(
@@ -38,6 +41,7 @@ export function mapCategoriaRow(
     edadMin: row.edad_min,
     edadMax: row.edad_max,
     orden: row.orden,
+    formato: row.formato ?? 'todos_contra_todos',
   }
 }
 
@@ -47,6 +51,8 @@ export interface Equipo {
   categoriaId: string
   color: string
   logoPlaceholder: string
+  logoUrl?: string | null
+  logoPublicId?: string | null
   jugadores: number
   inscripcionPagada: boolean
   /** Presente cuando el equipo viene de Supabase */
@@ -64,6 +70,8 @@ export function mapEquipoRow(row: EquipoRow, jugadoresCount: number): Equipo {
     categoriaId: row.categoria_id,
     color: row.color ?? '#64748b',
     logoPlaceholder: sigla.slice(0, 2).toUpperCase(),
+    logoUrl: row.logo_url ?? null,
+    logoPublicId: row.logo_public_id ?? null,
     jugadores: jugadoresCount,
     inscripcionPagada: row.estado_inscripcion === 'pagada' || row.estado_inscripcion === 'exonerada',
     sigla: row.sigla,
@@ -82,6 +90,7 @@ export interface Jugador {
   categoriaId: string
   estado: 'activo' | 'advertencia' | 'inactivo'
   advertencia?: string
+  fotoUrl?: string | null
 }
 
 export interface Partido {

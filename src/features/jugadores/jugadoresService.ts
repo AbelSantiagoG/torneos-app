@@ -1,18 +1,32 @@
 import { supabase } from '@/lib/supabase'
 import type { EstadoJugador, JugadorRow } from '@/types/database'
 import type { Jugador } from '@/types/torneo'
+import { getCategoriaById } from '@/features/categorias/categoriasService'
 import { getEquipoById } from '@/features/equipos/equiposService'
-
-function throwOnError<T>(result: { data: T; error: { message: string } | null }): T {
-  if (result.error) {
-    throw new Error(result.error.message)
-  }
-  return result.data
-}
+import { validarEdadCategoria } from '@/lib/jugadorEdad'
+import { assertNoSupabaseError, toUserError } from '@/lib/supabaseErrors'
 
 function todayDateString(): string {
   return new Date().toISOString().slice(0, 10)
 }
+
+const JUGADOR_ROW_SELECT = `
+        id,
+        torneo_id,
+        nombres,
+        apellidos,
+        nombre_completo,
+        tipo_documento,
+        documento,
+        fecha_nacimiento,
+        anio_nacimiento,
+        foto_url,
+        foto_public_id,
+        estado,
+        observaciones,
+        created_at,
+        updated_at
+      `
 
 function mapJugadorUi(row: JugadorRow, equipoId: string, categoriaId: string): Jugador {
   let estado: Jugador['estado'] = 'activo'
@@ -37,6 +51,7 @@ function mapJugadorUi(row: JugadorRow, equipoId: string, categoriaId: string): J
     categoriaId,
     estado,
     advertencia,
+    fotoUrl: row.foto_url ?? null,
   }
 }
 
@@ -61,20 +76,7 @@ export async function getJugadoresByEquipo(equipoId: string, categoriaId: string
       id,
       equipo_id,
       jugadores (
-        id,
-        torneo_id,
-        nombres,
-        apellidos,
-        nombre_completo,
-        tipo_documento,
-        documento,
-        fecha_nacimiento,
-        anio_nacimiento,
-        foto_url,
-        estado,
-        observaciones,
-        created_at,
-        updated_at
+        ${JUGADOR_ROW_SELECT}
       )
     `,
     )
@@ -82,7 +84,7 @@ export async function getJugadoresByEquipo(equipoId: string, categoriaId: string
     .eq('estado', 'activo')
     .is('fecha_fin', null)
 
-  const rows = throwOnError(result) as unknown as JugadorJoinRow[]
+  const rows = assertNoSupabaseError(result, 'jugador') as unknown as JugadorJoinRow[]
   return rows
     .map((r) => {
       const jr = unwrapNestedJugador(r.jugadores as JugadorRow | JugadorRow[] | null)
@@ -96,7 +98,7 @@ export async function getJugadoresActivosPorCategoria(categoriaId: string): Prom
   (Jugador & { equipoNombre: string; equipoColor: string })[]
 > {
   const eq = await supabase.from('equipos').select('id, nombre, color').eq('categoria_id', categoriaId)
-  const equiposRows = throwOnError(eq) as { id: string; nombre: string; color: string | null }[]
+  const equiposRows = assertNoSupabaseError(eq, 'equipo') as { id: string; nombre: string; color: string | null }[]
   const ids = equiposRows.map((e) => e.id)
   const meta = new Map(
     equiposRows.map((e) => [e.id, { nombre: e.nombre, color: e.color ?? '#64748b' }] as const),
@@ -109,20 +111,7 @@ export async function getJugadoresActivosPorCategoria(categoriaId: string): Prom
       `
       equipo_id,
       jugadores (
-        id,
-        torneo_id,
-        nombres,
-        apellidos,
-        nombre_completo,
-        tipo_documento,
-        documento,
-        fecha_nacimiento,
-        anio_nacimiento,
-        foto_url,
-        estado,
-        observaciones,
-        created_at,
-        updated_at
+        ${JUGADOR_ROW_SELECT}
       )
     `,
     )
@@ -130,7 +119,7 @@ export async function getJugadoresActivosPorCategoria(categoriaId: string): Prom
     .eq('estado', 'activo')
     .is('fecha_fin', null)
 
-  const rows = throwOnError(result) as unknown as EquipoJugadorJoin[]
+  const rows = assertNoSupabaseError(result, 'jugador') as unknown as EquipoJugadorJoin[]
   return rows
     .map((r) => {
       const jr = unwrapNestedJugador(r.jugadores)
@@ -148,11 +137,13 @@ export async function getJugadoresActivosPorCategoria(categoriaId: string): Prom
 
 export type JugadorCreateInput = {
   nombre_completo: string
-  documento?: string | null
-  anio_nacimiento?: number | null
+  documento: string
+  anio_nacimiento: number
   fecha_nacimiento?: string | null
   tipo_documento?: string | null
   observaciones?: string | null
+  foto_url?: string | null
+  foto_public_id?: string | null
 }
 
 export async function createJugadorConEquipo(
@@ -161,22 +152,35 @@ export async function createJugadorConEquipo(
 ): Promise<JugadorRow> {
   const nombreCompleto = jugadorData.nombre_completo.trim()
   if (!nombreCompleto) {
-    throw new Error('El nombre completo es obligatorio')
+    throw new Error('El nombre completo es obligatorio.')
   }
 
   const equipo = await getEquipoById(equipoId)
   if (!equipo) {
-    throw new Error('Equipo no encontrado')
+    throw new Error('Equipo no encontrado.')
   }
 
   const torneoId = equipo.torneo_id
-  const doc = jugadorData.documento?.trim() || null
-  if (doc) {
-    const dup = await supabase.from('jugadores').select('id').eq('torneo_id', torneoId).eq('documento', doc).maybeSingle()
-    if (dup.error) throw new Error(dup.error.message)
-    if (dup.data) {
-      throw new Error('Ya existe un jugador con este documento en el torneo')
-    }
+  const doc = jugadorData.documento.trim()
+  if (!doc) {
+    throw new Error('El documento es obligatorio.')
+  }
+
+  const anio = jugadorData.anio_nacimiento
+  if (anio == null || Number.isNaN(Number(anio)) || anio < 1900 || anio > new Date().getFullYear()) {
+    throw new Error('El año de nacimiento no es válido.')
+  }
+
+  const cat = await getCategoriaById(equipo.categoria_id)
+  const edadMsg = validarEdadCategoria(anio, cat?.edad_min ?? null, cat?.edad_max ?? null)
+  if (edadMsg) {
+    throw new Error(edadMsg)
+  }
+
+  const dup = await supabase.from('jugadores').select('id').eq('torneo_id', torneoId).eq('documento', doc).maybeSingle()
+  assertNoSupabaseError(dup, 'jugador')
+  if (dup.data) {
+    throw new Error('Ya existe un jugador con ese documento en este torneo.')
   }
 
   const parts = nombreCompleto.split(/\s+/)
@@ -190,14 +194,16 @@ export async function createJugadorConEquipo(
     nombre_completo: nombreCompleto,
     documento: doc,
     tipo_documento: jugadorData.tipo_documento ?? null,
-    anio_nacimiento: jugadorData.anio_nacimiento ?? null,
+    anio_nacimiento: anio,
     fecha_nacimiento: jugadorData.fecha_nacimiento ?? null,
     observaciones: jugadorData.observaciones ?? null,
+    foto_url: jugadorData.foto_url ?? null,
+    foto_public_id: jugadorData.foto_public_id ?? null,
     estado: 'activo' as EstadoJugador,
   }
 
   const ins = await supabase.from('jugadores').insert(insertJugador).select('*').single()
-  const jugador = throwOnError(ins) as JugadorRow
+  const jugador = assertNoSupabaseError(ins, 'jugador') as JugadorRow
 
   const je = await supabase
     .from('jugador_equipos')
@@ -210,9 +216,7 @@ export async function createJugadorConEquipo(
     .select('id')
     .single()
 
-  if (je.error) {
-    throw new Error(je.error.message)
-  }
+  assertNoSupabaseError(je, 'jugador')
 
   return jugador
 }
@@ -225,6 +229,8 @@ export type JugadorUpdateInput = Partial<{
   tipo_documento: string | null
   observaciones: string | null
   estado: EstadoJugador
+  foto_url: string | null
+  foto_public_id: string | null
 }>
 
 export async function updateJugador(id: string, data: JugadorUpdateInput): Promise<JugadorRow> {
@@ -242,9 +248,11 @@ export async function updateJugador(id: string, data: JugadorUpdateInput): Promi
   if (data.tipo_documento !== undefined) patch.tipo_documento = data.tipo_documento
   if (data.observaciones !== undefined) patch.observaciones = data.observaciones
   if (data.estado !== undefined) patch.estado = data.estado
+  if (data.foto_url !== undefined) patch.foto_url = data.foto_url
+  if (data.foto_public_id !== undefined) patch.foto_public_id = data.foto_public_id
 
   const result = await supabase.from('jugadores').update(patch).eq('id', id).select('*').single()
-  return throwOnError(result) as JugadorRow
+  return assertNoSupabaseError(result, 'jugador') as JugadorRow
 }
 
 export async function cambiarJugadorDeEquipo(
@@ -260,10 +268,10 @@ export async function cambiarJugadorDeEquipo(
     .is('fecha_fin', null)
     .limit(1)
 
-  const rows = throwOnError(list) as { id: string }[]
+  const rows = assertNoSupabaseError(list, 'jugador') as { id: string }[]
   const membresia = rows[0]
   if (!membresia) {
-    throw new Error('No hay una membresía activa para este jugador')
+    throw new Error('No hay una membresía activa para este jugador.')
   }
 
   const up = await supabase
@@ -275,9 +283,7 @@ export async function cambiarJugadorDeEquipo(
     })
     .eq('id', membresia.id)
 
-  if (up.error) {
-    throw new Error(up.error.message)
-  }
+  assertNoSupabaseError(up, 'jugador')
 
   const ins = await supabase.from('jugador_equipos').insert({
     jugador_id: jugadorId,
@@ -286,14 +292,23 @@ export async function cambiarJugadorDeEquipo(
     estado: 'activo',
   })
 
-  if (ins.error) {
-    throw new Error(ins.error.message)
-  }
+  assertNoSupabaseError(ins, 'jugador')
+}
+
+export async function eliminarJugador(jugadorId: string): Promise<void> {
+  const gl = await supabase.from('goles').delete().eq('jugador_id', jugadorId)
+  if (gl.error) throw toUserError(gl.error, 'jugador')
+  const tj = await supabase.from('tarjetas').delete().eq('jugador_id', jugadorId)
+  if (tj.error) throw toUserError(tj.error, 'jugador')
+  const je = await supabase.from('jugador_equipos').delete().eq('jugador_id', jugadorId)
+  if (je.error) throw toUserError(je.error, 'jugador')
+  const j = await supabase.from('jugadores').delete().eq('id', jugadorId)
+  if (j.error) throw toUserError(j.error, 'jugador')
 }
 
 export async function desactivarJugador(jugadorId: string): Promise<void> {
   const upJ = await supabase.from('jugadores').update({ estado: 'inactivo' }).eq('id', jugadorId)
-  if (upJ.error) throw new Error(upJ.error.message)
+  assertNoSupabaseError(upJ, 'jugador')
 
   const list = await supabase
     .from('jugador_equipos')
@@ -302,7 +317,7 @@ export async function desactivarJugador(jugadorId: string): Promise<void> {
     .eq('estado', 'activo')
     .is('fecha_fin', null)
 
-  const rows = throwOnError(list) as { id: string }[]
+  const rows = assertNoSupabaseError(list, 'jugador') as { id: string }[]
   for (const r of rows) {
     const up = await supabase
       .from('jugador_equipos')
@@ -312,6 +327,6 @@ export async function desactivarJugador(jugadorId: string): Promise<void> {
         motivo_cambio: 'Jugador desactivado',
       })
       .eq('id', r.id)
-    if (up.error) throw new Error(up.error.message)
+    assertNoSupabaseError(up, 'jugador')
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { Plus, Upload, Users, Edit, Trash2, AlertCircle, CheckCircle, Search, UserPlus, ArrowRightLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,19 +42,48 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { CrearTorneoDialog } from '@/components/torneos/CrearTorneoDialog'
+import { existeEquipoNombreEnCategoria } from '@/features/equipos/equiposService'
+import { parseSpreadsheetToRows } from '@/features/excel/parseSheet'
+import { importEquiposFromRows } from '@/features/excel/importEquipos'
+import { importJugadoresFromRows } from '@/features/excel/importJugadores'
+import {
+  PLANTILLA_EQUIPOS_CSV,
+  PLANTILLA_JUGADORES_CSV,
+  DESCRIPCION_IMPORT_EQUIPOS,
+  DESCRIPCION_IMPORT_JUGADORES,
+} from '@/features/excel/plantillasImportacion'
+import { translateUserError } from '@/lib/errorMessages'
+import { uploadImage } from '@/features/uploads/uploadService'
 import { PageHeader } from '@/components/common/PageHeader'
+import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
+import { useCategorias, categoriasQueryKey } from '@/features/categorias/useCategorias'
+import { useEquipos, equiposQueryKey } from '@/features/equipos/useEquipos'
+import { useJugadoresPorCategoria } from '@/features/jugadores/useJugadoresPorCategoria'
+import { useJugadores } from '@/features/jugadores/useJugadores'
+import { jugadoresQueryKey } from '@/features/jugadores/useJugadores'
+import { jugadoresCategoriaQueryKey } from '@/features/jugadores/useJugadoresPorCategoria'
+import type { Equipo } from '@/types/torneo'
+import { useQueryClient } from '@tanstack/react-query'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
-import { useCategorias } from '@/features/categorias/useCategorias'
-import { useEquipos } from '@/features/equipos/useEquipos'
-import { useJugadores } from '@/features/jugadores/useJugadores'
-import { useJugadoresPorCategoria } from '@/features/jugadores/useJugadoresPorCategoria'
-import type { Equipo } from '@/types/torneo'
 
 export function EquiposPage() {
-  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+  const qc = useQueryClient()
+
+  const downloadCsv = (filename: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  const { data: torneo, isLoading: torneoLoading, torneos } = useTorneoActivo()
   const torneoId = torneo?.id
+
+  const [crearTorneoOpen, setCrearTorneoOpen] = useState(false)
 
   const { data: categorias = [], isLoading: catLoading } = useCategorias(torneoId)
 
@@ -82,7 +111,15 @@ export function EquiposPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [isTeamDialogOpen, setIsTeamDialogOpen] = useState(false)
   const [editingEquipo, setEditingEquipo] = useState<Equipo | null>(null)
-  const [teamForm, setTeamForm] = useState({ nombre: '', sigla: '', color: '#dc2626', categoriaId: '' })
+  const [teamForm, setTeamForm] = useState({
+    nombre: '',
+    sigla: '',
+    color: '#dc2626',
+    categoriaId: '',
+    observaciones: '',
+    logoUrl: '' as string | null,
+    logoPublicId: '' as string | null,
+  })
 
   const [isPlayersSheetOpen, setIsPlayersSheetOpen] = useState(false)
   const [selectedEquipo, setSelectedEquipo] = useState<Equipo | null>(null)
@@ -92,10 +129,19 @@ export function EquiposPage() {
     createJugador,
     cambiarJugadorDeEquipo,
     desactivarJugador,
+    eliminarJugador,
     isMutating: jugMutating,
   } = useJugadores(selectedEquipo?.id, selectedCategoria || undefined)
 
-  const [playerForm, setPlayerForm] = useState({ nombreCompleto: '', documento: '', anioNacimiento: '' })
+  const [playerForm, setPlayerForm] = useState({
+    nombreCompleto: '',
+    documento: '',
+    anioNacimiento: '',
+    fechaNacimiento: '',
+    observaciones: '',
+    fotoUrl: '' as string | null,
+    fotoPublicId: '' as string | null,
+  })
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [transferTarget, setTransferTarget] = useState<{ jugadorId: string; nombre: string } | null>(null)
@@ -107,6 +153,11 @@ export function EquiposPage() {
     [equiposLista, searchQuery],
   )
 
+  const equiposImportRef = useRef<HTMLInputElement>(null)
+  const jugadoresImportRef = useRef<HTMLInputElement>(null)
+  const teamLogoInputRef = useRef<HTMLInputElement>(null)
+  const playerFotoInputRef = useRef<HTMLInputElement>(null)
+
   const openTeamDialog = (equipo?: Equipo) => {
     if (equipo) {
       setEditingEquipo(equipo)
@@ -115,6 +166,9 @@ export function EquiposPage() {
         sigla: equipo.sigla ?? '',
         color: equipo.color,
         categoriaId: equipo.categoriaId,
+        observaciones: equipo.observaciones ?? '',
+        logoUrl: equipo.logoUrl ?? null,
+        logoPublicId: equipo.logoPublicId ?? null,
       })
     } else {
       setEditingEquipo(null)
@@ -123,6 +177,9 @@ export function EquiposPage() {
         sigla: '',
         color: '#dc2626',
         categoriaId: selectedCategoria,
+        observaciones: '',
+        logoUrl: null,
+        logoPublicId: null,
       })
     }
     setIsTeamDialogOpen(true)
@@ -142,6 +199,14 @@ export function EquiposPage() {
       toast.error('Selecciona una categoría')
       return
     }
+    if (!teamForm.sigla.trim()) {
+      toast.error('La sigla es obligatoria')
+      return
+    }
+    if (!teamForm.color?.trim()) {
+      toast.error('El color es obligatorio')
+      return
+    }
     try {
       if (editingEquipo) {
         await updateEquipo({
@@ -150,23 +215,34 @@ export function EquiposPage() {
             nombre: teamForm.nombre.trim(),
             sigla: teamForm.sigla.trim() || null,
             color: teamForm.color,
+            observaciones: teamForm.observaciones.trim() || null,
+            logo_url: teamForm.logoUrl ?? null,
+            logo_public_id: (teamForm.logoPublicId || editingEquipo.logoPublicId) ?? null,
           },
         })
         toast.success('Equipo actualizado')
       } else {
+        const existe = await existeEquipoNombreEnCategoria(catId, teamForm.nombre.trim())
+        if (existe) {
+          toast.error('Ya existe un equipo con ese nombre en esta categoría.')
+          return
+        }
         await createEquipo({
           categoriaId: catId,
           data: {
             nombre: teamForm.nombre.trim(),
             sigla: teamForm.sigla.trim() || null,
             color: teamForm.color,
+            observaciones: teamForm.observaciones.trim() || null,
+            logo_url: teamForm.logoUrl ?? null,
+            logo_public_id: teamForm.logoPublicId ?? null,
           },
         })
         toast.success('Equipo creado')
       }
       setIsTeamDialogOpen(false)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al guardar equipo')
+      toast.error(translateUserError(e, 'equipo'))
     }
   }
 
@@ -175,14 +251,22 @@ export function EquiposPage() {
       await deleteEquipo(id)
       toast.success('Equipo eliminado')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'No se pudo eliminar el equipo')
+      toast.error(translateUserError(e, 'equipo'))
     }
   }
 
   const openPlayersSheet = (equipo: Equipo) => {
     setSelectedEquipo(equipo)
     setIsPlayersSheetOpen(true)
-    setPlayerForm({ nombreCompleto: '', documento: '', anioNacimiento: '' })
+    setPlayerForm({
+      nombreCompleto: '',
+      documento: '',
+      anioNacimiento: '',
+      fechaNacimiento: '',
+      observaciones: '',
+      fotoUrl: null,
+      fotoPublicId: null,
+    })
   }
 
   const savePlayer = async () => {
@@ -191,17 +275,103 @@ export function EquiposPage() {
       toast.error('El nombre completo es obligatorio')
       return
     }
+    if (!playerForm.documento.trim()) {
+      toast.error('El documento es obligatorio')
+      return
+    }
+    const anio = Number(playerForm.anioNacimiento)
+    if (!playerForm.anioNacimiento.trim() || Number.isNaN(anio)) {
+      toast.error('El año de nacimiento es obligatorio')
+      return
+    }
     try {
       await createJugador({
         nombre_completo: playerForm.nombreCompleto.trim(),
-        documento: playerForm.documento.trim() || null,
-        anio_nacimiento: playerForm.anioNacimiento.trim() ? Number(playerForm.anioNacimiento) : null,
+        documento: playerForm.documento.trim(),
+        anio_nacimiento: anio,
+        fecha_nacimiento: playerForm.fechaNacimiento.trim() || null,
+        observaciones: playerForm.observaciones.trim() || null,
+        foto_url: playerForm.fotoUrl ?? null,
+        foto_public_id: playerForm.fotoPublicId ?? null,
       })
       toast.success('Jugador registrado')
       setPlayerDialogOpen(false)
-      setPlayerForm({ nombreCompleto: '', documento: '', anioNacimiento: '' })
+      setPlayerForm({
+        nombreCompleto: '',
+        documento: '',
+        anioNacimiento: '',
+        fechaNacimiento: '',
+        observaciones: '',
+        fotoUrl: null,
+        fotoPublicId: null,
+      })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al crear jugador')
+    }
+  }
+
+  const handleEquiposExcelChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !torneoId || !selectedCategoria) {
+      toast.error('Selecciona una categoría e importa un archivo .xlsx o .csv.')
+      return
+    }
+    const lower = file.name.toLowerCase()
+    if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls') && !lower.endsWith('.csv')) {
+      toast.error('Formato no soportado. Usa .xlsx, .xls o .csv.')
+      return
+    }
+    try {
+      const rows = await parseSpreadsheetToRows(file)
+      const res = await importEquiposFromRows(rows, { torneoId, categoriaId: selectedCategoria })
+      toast.success(`Importación: ${res.creados} equipos creados.`)
+      if (res.omitidos.length) {
+        toast.message(`Omitidos (${res.omitidos.length}): ${res.omitidos.slice(0, 8).join('; ')}${res.omitidos.length > 8 ? '…' : ''}`)
+      }
+      if (res.errores.length) {
+        toast.error(`${res.errores.length} filas con error. Revisa la consola o el archivo.`)
+        console.warn(res.errores)
+      }
+      void qc.invalidateQueries({ queryKey: equiposQueryKey(selectedCategoria) })
+      void qc.invalidateQueries({ queryKey: categoriasQueryKey(torneoId) })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo importar el archivo.')
+    }
+  }
+
+  const handleJugadoresExcelChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    const eqId = selectedEquipo?.id
+    const catId = selectedCategoria
+    if (!file || !eqId) {
+      toast.error('Abre el listado de jugadores de un equipo antes de importar.')
+      return
+    }
+    const lower = file.name.toLowerCase()
+    if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls') && !lower.endsWith('.csv')) {
+      toast.error('Formato no soportado. Usa .xlsx, .xls o .csv.')
+      return
+    }
+    try {
+      const rows = await parseSpreadsheetToRows(file)
+      const res = await importJugadoresFromRows(rows, eqId)
+      toast.success(`Jugadores: ${res.creados} creados.`)
+      if (res.omitidos.length) {
+        toast.message(`Omitidos (${res.omitidos.length}): ${res.omitidos.slice(0, 6).join('; ')}${res.omitidos.length > 6 ? '…' : ''}`)
+      }
+      if (res.errores.length) {
+        toast.error(`${res.errores.length} filas con error.`)
+        console.warn(res.errores)
+      }
+      if (catId) {
+        void qc.invalidateQueries({ queryKey: equiposQueryKey(catId) })
+        void qc.invalidateQueries({ queryKey: jugadoresCategoriaQueryKey(catId) })
+      }
+      void qc.invalidateQueries({ queryKey: jugadoresQueryKey(eqId) })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo importar jugadores.')
     }
   }
 
@@ -240,12 +410,42 @@ export function EquiposPage() {
       await desactivarJugador(jugadorId)
       toast.success('Jugador desactivado')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al desactivar')
+      toast.error(translateUserError(e, 'jugador'))
+    }
+  }
+
+  const handleDeletePlayer = async (jugadorId: string) => {
+    if (!confirm('¿Eliminar definitivamente este jugador? Si tiene goles o tarjetas en actas, puede fallar.')) return
+    try {
+      await eliminarJugador(jugadorId)
+      toast.success('Jugador eliminado')
+    } catch (e) {
+      toast.error(translateUserError(e, 'jugador'))
     }
   }
 
   const loading = torneoLoading || catLoading
   const catNombre = categorias.find((c) => c.id === selectedCategoria)?.nombre ?? ''
+
+  if (!torneoLoading && torneos.length === 0) {
+    return (
+      <div className="space-y-6">
+        <CrearTorneoDialog open={crearTorneoOpen} onOpenChange={setCrearTorneoOpen} />
+        <PageHeader title="Equipos y Jugadores" description="Gestiona equipos y jugadores por categoría" />
+        <EmptyState
+          icon={Users}
+          title="Crea tu primer torneo"
+          description="Aún no hay torneos en Supabase. Crea uno para cargar categorías, equipos y jugadores."
+          action={
+            <Button type="button" onClick={() => setCrearTorneoOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Nuevo torneo
+            </Button>
+          }
+        />
+      </div>
+    )
+  }
 
   if (!torneoLoading && !torneo) {
     return (
@@ -254,7 +454,7 @@ export function EquiposPage() {
         <EmptyState
           icon={Users}
           title="Sin torneo activo"
-          description="No hay torneo activo. Configura un torneo en Supabase para gestionar equipos."
+          description="Selecciona un torneo en la barra superior o crea uno nuevo."
         />
       </div>
     )
@@ -262,12 +462,46 @@ export function EquiposPage() {
 
   return (
     <div className="space-y-6">
+      <CrearTorneoDialog open={crearTorneoOpen} onOpenChange={setCrearTorneoOpen} />
+      <details className="rounded-lg border bg-card px-4 py-3 text-sm">
+        <summary className="cursor-pointer font-medium">Formato para importar Excel / CSV</summary>
+        <p className="mt-2 text-muted-foreground">{DESCRIPCION_IMPORT_EQUIPOS}</p>
+        <p className="mt-2 text-muted-foreground">{DESCRIPCION_IMPORT_JUGADORES}</p>
+      </details>
       <PageHeader
         title="Equipos y Jugadores"
         description="Gestiona los equipos inscritos y sus jugadores por categoría"
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" type="button">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              type="button"
+              size="sm"
+              onClick={() => downloadCsv('plantilla-equipos.csv', PLANTILLA_EQUIPOS_CSV)}
+            >
+              Plantilla equipos
+            </Button>
+            <Button
+              variant="outline"
+              type="button"
+              size="sm"
+              onClick={() => downloadCsv('plantilla-jugadores.csv', PLANTILLA_JUGADORES_CSV)}
+            >
+              Plantilla jugadores
+            </Button>
+            <input
+              ref={equiposImportRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => void handleEquiposExcelChange(e)}
+            />
+            <Button
+              variant="outline"
+              type="button"
+              disabled={!selectedCategoria || eqMutating}
+              onClick={() => equiposImportRef.current?.click()}
+            >
               <Upload className="mr-2 h-4 w-4" />
               Importar desde Excel
             </Button>
@@ -343,6 +577,50 @@ export function EquiposPage() {
                         value={teamForm.sigla}
                         onChange={(e) => setTeamForm({ ...teamForm, sigla: e.target.value })}
                       />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="teamObs">Observaciones</Label>
+                    <Input
+                      id="teamObs"
+                      value={teamForm.observaciones}
+                      onChange={(e) => setTeamForm({ ...teamForm, observaciones: e.target.value })}
+                      placeholder="Opcional"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Logo del equipo</Label>
+                    <input
+                      ref={teamLogoInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        e.target.value = ''
+                        if (!f) return
+                        void (async () => {
+                          try {
+                            const up = await uploadImage(f, 'equipos/logos')
+                            setTeamForm((prev) => ({
+                              ...prev,
+                              logoUrl: up.secure_url,
+                              logoPublicId: up.public_id,
+                            }))
+                            toast.success('Logo listo para guardar')
+                          } catch (err) {
+                            toast.error(err instanceof Error ? err.message : 'No se pudo subir el logo')
+                          }
+                        })()
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button type="button" variant="outline" size="sm" onClick={() => teamLogoInputRef.current?.click()}>
+                        Subir imagen
+                      </Button>
+                      {teamForm.logoUrl ? (
+                        <img src={teamForm.logoUrl} alt="" className="h-12 w-12 rounded-md border object-cover" />
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -429,12 +707,20 @@ export function EquiposPage() {
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-12 w-12 items-center justify-center rounded-lg text-lg font-bold text-white"
-                        style={{ backgroundColor: equipo.color }}
-                      >
-                        {equipo.logoPlaceholder}
-                      </div>
+                      {equipo.logoUrl ? (
+                        <img
+                          src={equipo.logoUrl}
+                          alt=""
+                          className="h-12 w-12 rounded-lg border object-cover"
+                        />
+                      ) : (
+                        <div
+                          className="flex h-12 w-12 items-center justify-center rounded-lg text-lg font-bold text-white"
+                          style={{ backgroundColor: equipo.color }}
+                        >
+                          {equipo.logoPlaceholder}
+                        </div>
+                      )}
                       <div>
                         <CardTitle className="text-base">{equipo.nombre}</CardTitle>
                         <CardDescription className="mt-1 flex items-center gap-1">
@@ -581,12 +867,16 @@ export function EquiposPage() {
         <SheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-xl">
           <SheetHeader>
             <div className="flex items-center gap-3">
-              <div
-                className="flex h-10 w-10 items-center justify-center rounded-lg text-sm font-bold text-white"
-                style={{ backgroundColor: selectedEquipo?.color }}
-              >
-                {selectedEquipo?.logoPlaceholder}
-              </div>
+              {selectedEquipo?.logoUrl ? (
+                <img src={selectedEquipo.logoUrl} alt="" className="h-10 w-10 rounded-lg border object-cover" />
+              ) : (
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-lg text-sm font-bold text-white"
+                  style={{ backgroundColor: selectedEquipo?.color }}
+                >
+                  {selectedEquipo?.logoPlaceholder}
+                </div>
+              )}
               <div>
                 <SheetTitle>{selectedEquipo?.nombre}</SheetTitle>
                 <SheetDescription>Gestión de jugadores del equipo</SheetDescription>
@@ -594,12 +884,25 @@ export function EquiposPage() {
             </div>
           </SheetHeader>
           <div className="mt-6 flex flex-1 flex-col gap-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-sm font-medium">{jugadoresEquipo.length} jugadores activos</h4>
-              <Button size="sm" onClick={() => setPlayerDialogOpen(true)} disabled={jugMutating}>
-                <UserPlus className="mr-2 h-4 w-4" />
-                Agregar
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={jugadoresImportRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={(e) => void handleJugadoresExcelChange(e)}
+                />
+                <Button type="button" size="sm" variant="outline" onClick={() => jugadoresImportRef.current?.click()} disabled={jugMutating}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Importar Excel
+                </Button>
+                <Button size="sm" onClick={() => setPlayerDialogOpen(true)} disabled={jugMutating}>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Agregar
+                </Button>
+              </div>
             </div>
             <Dialog open={playerDialogOpen} onOpenChange={setPlayerDialogOpen}>
               <DialogContent>
@@ -617,19 +920,69 @@ export function EquiposPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Documento (opcional)</Label>
+                    <Label>Documento</Label>
                     <Input
                       value={playerForm.documento}
                       onChange={(e) => setPlayerForm({ ...playerForm, documento: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Año de nacimiento (opcional)</Label>
+                    <Label>Año de nacimiento</Label>
                     <Input
                       type="number"
                       value={playerForm.anioNacimiento}
                       onChange={(e) => setPlayerForm({ ...playerForm, anioNacimiento: e.target.value })}
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Fecha de nacimiento (opcional)</Label>
+                    <Input
+                      type="date"
+                      value={playerForm.fechaNacimiento}
+                      onChange={(e) => setPlayerForm({ ...playerForm, fechaNacimiento: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Observaciones (opcional)</Label>
+                    <Input
+                      value={playerForm.observaciones}
+                      onChange={(e) => setPlayerForm({ ...playerForm, observaciones: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Foto del jugador</Label>
+                    <input
+                      ref={playerFotoInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        e.target.value = ''
+                        if (!f) return
+                        void (async () => {
+                          try {
+                            const up = await uploadImage(f, 'jugadores/fotos')
+                            setPlayerForm((prev) => ({
+                              ...prev,
+                              fotoUrl: up.secure_url,
+                              fotoPublicId: up.public_id,
+                            }))
+                            toast.success('Foto lista para guardar')
+                          } catch (err) {
+                            toast.error(err instanceof Error ? err.message : 'No se pudo subir la foto')
+                          }
+                        })()
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button type="button" variant="outline" size="sm" onClick={() => playerFotoInputRef.current?.click()}>
+                        Subir foto
+                      </Button>
+                      {playerForm.fotoUrl ? (
+                        <img src={playerForm.fotoUrl} alt="" className="h-14 w-14 rounded-md border object-cover" />
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 <DialogFooter>
@@ -727,7 +1080,17 @@ export function EquiposPage() {
                         >
                           Desactivar
                         </Button>
-                      </TableCell>
+                        <Button
+                          variant="ghost"
+                          type="button"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => void handleDeletePlayer(jugador.id)}
+                          disabled={jugMutating}
+                        >
+                          Eliminar
+                        </Button>
+          </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

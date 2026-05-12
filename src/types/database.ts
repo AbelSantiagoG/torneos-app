@@ -14,11 +14,14 @@ export type TorneoRow = {
   fecha_inicio: string | null
   fecha_fin: string | null
   logo_url: string | null
+  logo_public_id: string | null
   estado: EstadoTorneo
   created_by: string | null
   created_at: string
   updated_at: string
 }
+
+export type FormatoCompetencia = 'todos_contra_todos' | 'fase_grupos' | 'eliminatoria'
 
 export type CategoriaRow = {
   id: string
@@ -32,6 +35,7 @@ export type CategoriaRow = {
   activa: boolean
   valor_inscripcion: number
   tarifa_arbitraje: number
+  formato: FormatoCompetencia
   created_at: string
   updated_at: string
 }
@@ -44,6 +48,7 @@ export type EquipoRow = {
   sigla: string | null
   color: string | null
   logo_url: string | null
+  logo_public_id: string | null
   estado: EstadoEquipo
   estado_inscripcion: EstadoInscripcion
   observaciones: string | null
@@ -62,6 +67,7 @@ export type JugadorRow = {
   fecha_nacimiento: string | null
   anio_nacimiento: number | null
   foto_url: string | null
+  foto_public_id: string | null
   estado: EstadoJugador
   observaciones: string | null
   created_at: string

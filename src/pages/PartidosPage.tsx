@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Calendar, Clock, MapPin, AlertTriangle, Shuffle, Edit, CheckCircle } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  Calendar,
+  Clock,
+  MapPin,
+  AlertTriangle,
+  Shuffle,
+  Edit,
+  Trash2,
+  Plus,
+} from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,16 +30,39 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { PageHeader } from '@/components/common/PageHeader'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatDate } from '@/lib/utils'
+import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias } from '@/features/categorias/useCategorias'
-import { usePartidosTorneo } from '@/features/partidos/usePartidosTorneo'
-import { groupByFecha } from '@/features/partidos/partidosService'
+import { usePartidosTorneo, partidosTorneoQueryKey } from '@/features/partidos/usePartidosTorneo'
+import {
+  groupByFecha,
+  countPartidosEnCategoria,
+  generarFixtureCategoria,
+  deletePartidoCascade,
+  updatePartido,
+  createPartidoManual,
+  upsertProgramacion,
+  sorteoProgramacionesTorneoCategoria,
+} from '@/features/partidos/partidosService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
 import { isJugadoEstado, isProgramadoEstado } from '@/features/partidos/partidosUi'
+import { countEquiposEnCategoria } from '@/features/equipos/equiposService'
+import { useEquipos } from '@/features/equipos/useEquipos'
+import { useCanchas } from '@/features/canchas/useCanchas'
 
 interface PartidosPageProps {
   onOpenActa?: () => void
@@ -59,18 +92,70 @@ function findConflictIdsForFecha(list: PartidoListaUi[]): string[] {
   return conflicts
 }
 
+function TeamAvatar({
+  nombre,
+  color,
+  logoUrl,
+}: {
+  nombre: string
+  color: string
+  logoUrl?: string | null
+}) {
+  if (logoUrl) {
+    return <img src={logoUrl} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+  }
+  return (
+    <div
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-xs font-bold text-white"
+      style={{ backgroundColor: color }}
+    >
+      {initials(nombre || '?')}
+    </div>
+  )
+}
+
 export function PartidosPage({ onOpenActa }: PartidosPageProps) {
+  const qc = useQueryClient()
   const [selectedCategoria, setSelectedCategoria] = useState('')
   const [activeTab, setActiveTab] = useState('categoria')
+  const [fixtureOpen, setFixtureOpen] = useState(false)
+  const [fechaBaseFixture, setFechaBaseFixture] = useState(() => new Date().toISOString().slice(0, 10))
+  const [generandoFixture, setGenerandoFixture] = useState(false)
+  const [sorteoFecha, setSorteoFecha] = useState(() => new Date().toISOString().slice(0, 10))
+  const [sorteoDias, setSorteoDias] = useState('14')
+
+  const [editPartido, setEditPartido] = useState<PartidoListaUi | null>(null)
+  const [editJornada, setEditJornada] = useState('')
+  const [editFechaFixture, setEditFechaFixture] = useState('')
+  const [editLocal, setEditLocal] = useState('')
+  const [editVisit, setEditVisit] = useState('')
+
+  const [createOpen, setCreateOpen] = useState(false)
+  const [nuevoLocal, setNuevoLocal] = useState('')
+  const [nuevoVisit, setNuevoVisit] = useState('')
+  const [nuevoJornada, setNuevoJornada] = useState('1')
+  const [nuevoFecha, setNuevoFecha] = useState('')
+
+  const [progPartido, setProgPartido] = useState<PartidoListaUi | null>(null)
+  const [progFecha, setProgFecha] = useState('')
+  const [progHora, setProgHora] = useState('09:00')
+  const [progCancha, setProgCancha] = useState('')
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
 
   const { data: categorias = [], isLoading: catLoading } = useCategorias(torneoId)
-  const { data: partidosAll = [], isLoading: parLoading, error: parError } = usePartidosTorneo(torneoId)
+  const { data: bundle, isLoading: parLoading, error: parError } = usePartidosTorneo(torneoId)
+
+  const fixture = bundle?.fixture ?? []
+  const programados = bundle?.programados ?? []
+  const programmedIds = useMemo(() => new Set(programados.map((p) => p.id)), [programados])
+
+  const { data: equiposCat = [] } = useEquipos(selectedCategoria || undefined, torneoId)
+  const { data: canchas = [] } = useCanchas(torneoId)
 
   useEffect(() => {
-    if (parError) toast.error(parError instanceof Error ? parError.message : 'Error al cargar partidos')
+    if (parError) toast.error(translateUserError(parError, 'fixture'))
   }, [parError])
 
   useEffect(() => {
@@ -79,23 +164,164 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
   }, [categorias, selectedCategoria])
 
-  const partidosCategoria = useMemo(
-    () => (selectedCategoria ? partidosAll.filter((p) => p.categoriaId === selectedCategoria) : partidosAll),
-    [partidosAll, selectedCategoria],
+  const categoriaActiva = useMemo(
+    () => categorias.find((c) => c.id === selectedCategoria),
+    [categorias, selectedCategoria],
   )
 
-  const jornadas = useMemo(() => [...new Set(partidosCategoria.map((p) => p.jornada))].sort((a, b) => a - b), [partidosCategoria])
+  const partidosCategoria = useMemo(
+    () => (selectedCategoria ? fixture.filter((p) => p.categoriaId === selectedCategoria) : fixture),
+    [fixture, selectedCategoria],
+  )
 
-  const partidosPorFecha = useMemo(() => groupByFecha(partidosAll), [partidosAll])
+  const jornadas = useMemo(
+    () => [...new Set(partidosCategoria.map((p) => p.jornada))].sort((a, b) => a - b),
+    [partidosCategoria],
+  )
+
+  const partidosPorFecha = useMemo(() => groupByFecha(programados), [programados])
   const fechasOrdenadas = useMemo(() => Object.keys(partidosPorFecha).sort(), [partidosPorFecha])
 
   const pendientesProgramar = useMemo(
-    () =>
-      partidosCategoria.filter(
-        (p) => !isJugadoEstado(p.estado) && (!String(p.hora || '').trim() || !String(p.cancha || '').trim()),
-      ),
-    [partidosCategoria],
+    () => partidosCategoria.filter((p) => !programmedIds.has(p.id)),
+    [partidosCategoria, programmedIds],
   )
+
+  const invalidatePartidos = () => {
+    if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
+  }
+
+  const ejecutarGenerarFixture = async () => {
+    if (!selectedCategoria || !torneoId) {
+      toast.error('Selecciona una categoría.')
+      return
+    }
+    if (categoriaActiva?.formato && categoriaActiva.formato !== 'todos_contra_todos') {
+      toast.error('Por ahora solo se puede generar automáticamente el fixture en formato "Todos contra todos".')
+      return
+    }
+    setGenerandoFixture(true)
+    try {
+      const nEq = await countEquiposEnCategoria(selectedCategoria)
+      if (nEq < 2) {
+        toast.error('Se necesitan al menos dos equipos en la categoría para generar el fixture.')
+        return
+      }
+      const nPar = await countPartidosEnCategoria(selectedCategoria)
+      if (nPar > 0) {
+        toast.error('Esta categoría ya tiene partidos en el fixture.')
+        return
+      }
+      await generarFixtureCategoria(selectedCategoria, fechaBaseFixture)
+      toast.success('Fixture generado.')
+      setFixtureOpen(false)
+      invalidatePartidos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGenerandoFixture(false)
+    }
+  }
+
+  const openEdit = (p: PartidoListaUi) => {
+    setEditPartido(p)
+    setEditJornada(String(p.jornada ?? ''))
+    setEditFechaFixture(p.fecha?.slice(0, 10) ?? '')
+    setEditLocal(p.equipoLocalId ?? '')
+    setEditVisit(p.equipoVisitanteId ?? '')
+  }
+
+  const saveEdit = async () => {
+    if (!editPartido) return
+    try {
+      await updatePartido(editPartido.id, {
+        jornada: Number(editJornada) || 0,
+        fecha_fixture: editFechaFixture || null,
+        equipo_local_id: editLocal,
+        equipo_visitante_id: editVisit,
+      })
+      toast.success('Partido actualizado')
+      setEditPartido(null)
+      invalidatePartidos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    }
+  }
+
+  const eliminarPartido = async (p: PartidoListaUi) => {
+    if (!confirm('¿Eliminar este partido del fixture? Se borrarán también programación, goles y acta asociados si existen.')) return
+    try {
+      await deletePartidoCascade(p.id)
+      toast.success('Partido eliminado')
+      invalidatePartidos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    }
+  }
+
+  const crearManual = async () => {
+    if (!torneoId || !selectedCategoria) return
+    if (!nuevoLocal || !nuevoVisit || nuevoLocal === nuevoVisit) {
+      toast.error('Selecciona equipos local y visitante distintos.')
+      return
+    }
+    try {
+      await createPartidoManual({
+        torneo_id: torneoId,
+        categoria_id: selectedCategoria,
+        equipo_local_id: nuevoLocal,
+        equipo_visitante_id: nuevoVisit,
+        jornada: Number(nuevoJornada) || 1,
+        fecha_fixture: nuevoFecha || null,
+      })
+      toast.success('Partido creado')
+      setCreateOpen(false)
+      setNuevoLocal('')
+      setNuevoVisit('')
+      invalidatePartidos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    }
+  }
+
+  const ejecutarSorteo = async () => {
+    if (!torneoId || !selectedCategoria) return
+    const dias = Number(sorteoDias)
+    if (Number.isNaN(dias) || dias < 1) {
+      toast.error('Indica un número de días válido (1 o más).')
+      return
+    }
+    try {
+      const { creadas } = await sorteoProgramacionesTorneoCategoria(torneoId, selectedCategoria, {
+        fechaInicio: sorteoFecha,
+        dias,
+      })
+      toast.success(creadas ? `Se programaron ${creadas} partidos.` : 'No había partidos pendientes de programar.')
+      invalidatePartidos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'programacion'))
+    }
+  }
+
+  const guardarProgramacionManual = async () => {
+    if (!progPartido || !progCancha || !progFecha) {
+      toast.error('Completa fecha y cancha.')
+      return
+    }
+    try {
+      await upsertProgramacion(progPartido.programacionId ?? null, {
+        partido_id: progPartido.id,
+        cancha_id: progCancha,
+        fecha: progFecha,
+        hora_inicio: progHora,
+      })
+      toast.success('Programación guardada')
+      setProgPartido(null)
+      invalidatePartidos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'programacion'))
+    }
+  }
 
   if (torneoLoading) {
     return (
@@ -119,62 +345,219 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     )
   }
 
-  const emptyFixture = !parLoading && partidosAll.length === 0
-
   return (
     <div className="space-y-6">
-      <PageHeader title="Partidos / Fixture" description="Gestiona la programación de partidos, jornadas y resultados" />
+      <PageHeader
+        title="Partidos / Fixture"
+        description="1) Por categoría: emparejamientos y jornadas. 2) Sorteo: fecha, cancha y hora en programaciones. 3) Por fecha: solo lo ya programado."
+      />
 
-      {emptyFixture ? (
-        <Card>
-          <CardContent className="py-10">
-            <EmptyState
-              icon={Calendar}
-              title="Sin partidos en el fixture"
-              description="Aún no hay partidos registrados en Supabase para este torneo. Cuando existan, se listarán aquí."
-              action={
-                <div className="flex flex-wrap justify-center gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      toast.message('La generación automática de fixture se conectará en una siguiente iteración.')
-                    }
-                  >
-                    Generar fixture
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      toast.message('La programación manual de partidos se habilitará cuando el módulo esté listo.')
-                    }
-                  >
-                    Programar partido
-                  </Button>
-                </div>
-              }
+      <Dialog open={fixtureOpen} onOpenChange={setFixtureOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generar fixture (todos contra todos)</DialogTitle>
+            <DialogDescription>
+              Solo define enfrentamientos y fecha base por jornada. Cancha y hora se asignan después en Sorteo de
+              horarios.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="fixture-fecha">Fecha inicio (referencia)</Label>
+            <Input
+              id="fixture-fecha"
+              type="date"
+              value={fechaBaseFixture}
+              onChange={(e) => setFechaBaseFixture(e.target.value)}
             />
-          </CardContent>
-        </Card>
-      ) : (
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3 lg:inline-flex lg:w-auto">
-            <TabsTrigger value="categoria">Por Categoría</TabsTrigger>
-            <TabsTrigger value="fecha">Por Fecha</TabsTrigger>
-            <TabsTrigger value="sorteo">Sorteo de Horarios</TabsTrigger>
-          </TabsList>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setFixtureOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={() => void ejecutarGenerarFixture()} disabled={generandoFixture}>
+              {generandoFixture ? 'Generando…' : 'Generar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-          <TabsContent value="categoria" className="space-y-4">
-            <Card>
-              <CardContent className="pt-6">
-                {catLoading ? (
-                  <Skeleton className="h-10 w-64" />
-                ) : categorias.length === 0 ? (
-                  <EmptyState
-                    icon={Calendar}
-                    title="Sin categorías"
-                    description="Crea categorías antes de organizar el fixture."
-                  />
-                ) : (
+      <Dialog open={Boolean(editPartido)} onOpenChange={(o) => !o && setEditPartido(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar partido</DialogTitle>
+            <DialogDescription>Cambia jornada, fecha base del fixture o equipos.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-1">
+              <Label>Jornada</Label>
+              <Input value={editJornada} onChange={(e) => setEditJornada(e.target.value)} type="number" />
+            </div>
+            <div className="space-y-1">
+              <Label>Fecha base (fixture)</Label>
+              <Input type="date" value={editFechaFixture} onChange={(e) => setEditFechaFixture(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Local</Label>
+              <Select value={editLocal} onValueChange={setEditLocal}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {equiposCat.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Visitante</Label>
+              <Select value={editVisit} onValueChange={setEditVisit}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {equiposCat.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditPartido(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void saveEdit()}>Guardar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nuevo partido manual</DialogTitle>
+            <DialogDescription>En la categoría seleccionada.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-1">
+              <Label>Local</Label>
+              <Select value={nuevoLocal} onValueChange={setNuevoLocal}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Equipo local" />
+                </SelectTrigger>
+                <SelectContent>
+                  {equiposCat.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Visitante</Label>
+              <Select value={nuevoVisit} onValueChange={setNuevoVisit}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Equipo visitante" />
+                </SelectTrigger>
+                <SelectContent>
+                  {equiposCat.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Jornada</Label>
+              <Input value={nuevoJornada} onChange={(e) => setNuevoJornada(e.target.value)} type="number" />
+            </div>
+            <div className="space-y-1">
+              <Label>Fecha base (opcional)</Label>
+              <Input type="date" value={nuevoFecha} onChange={(e) => setNuevoFecha(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void crearManual()}>Crear</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(progPartido)} onOpenChange={(o) => !o && setProgPartido(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Programar partido</DialogTitle>
+            <DialogDescription>
+              Crea o actualiza la fila en programaciones (cancha obligatoria en base de datos).
+            </DialogDescription>
+          </DialogHeader>
+          {progPartido && (
+            <div className="grid gap-3 py-2">
+              <p className="text-sm text-muted-foreground">
+                {progPartido.equipoLocalNombre} vs {progPartido.equipoVisitanteNombre}
+              </p>
+              <div className="space-y-1">
+                <Label>Fecha</Label>
+                <Input type="date" value={progFecha} onChange={(e) => setProgFecha(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label>Hora inicio</Label>
+                <Input type="time" value={progHora} onChange={(e) => setProgHora(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label>Cancha</Label>
+                <Select value={progCancha} onValueChange={setProgCancha}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona cancha" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {canchas.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProgPartido(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void guardarProgramacionManual()}>Guardar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-3 lg:inline-flex lg:w-auto">
+          <TabsTrigger value="categoria">Por Categoría</TabsTrigger>
+          <TabsTrigger value="sorteo">Sorteo de Horarios</TabsTrigger>
+          <TabsTrigger value="fecha">Por Fecha</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="categoria" className="space-y-4">
+          <Card>
+            <CardContent className="pt-6">
+              {catLoading ? (
+                <Skeleton className="h-10 w-64" />
+              ) : categorias.length === 0 ? (
+                <EmptyState
+                  icon={Calendar}
+                  title="Sin categorías"
+                  description="Crea categorías antes de organizar el fixture."
+                />
+              ) : (
+                <div className="flex flex-wrap items-end gap-3">
                   <Select value={selectedCategoria} onValueChange={setSelectedCategoria}>
                     <SelectTrigger className="w-full md:w-64">
                       <SelectValue placeholder="Categoría" />
@@ -190,153 +573,258 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       ))}
                     </SelectContent>
                   </Select>
-                )}
-              </CardContent>
-            </Card>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setFixtureOpen(true)}>
+                    Generar fixture
+                  </Button>
+                  <Button type="button" size="sm" onClick={() => setCreateOpen(true)} disabled={!selectedCategoria}>
+                    <Plus className="mr-1 h-4 w-4" />
+                    Partido manual
+                  </Button>
+                </div>
+              )}
+              {categoriaActiva?.formato && categoriaActiva.formato !== 'todos_contra_todos' && (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Formato {categoriaActiva.formato}: la generación automática del fixture es próximamente; puedes crear
+                  partidos manualmente.
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
-            {parLoading ? (
-              <Skeleton className="h-64 w-full" />
-            ) : partidosCategoria.length === 0 ? (
-              <EmptyState
-                icon={Calendar}
-                title="Sin partidos en esta categoría"
-                description="No hay partidos asociados a la categoría seleccionada."
-              />
-            ) : (
-              jornadas.map((jornada) => {
-                const partidosJornada = partidosCategoria.filter((p) => p.jornada === jornada)
-                return (
-                  <Card key={jornada}>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Jornada {jornada}</CardTitle>
-                      <CardDescription>{partidosJornada.length} partidos</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                        {partidosJornada.map((partido) => {
-                          const played = isJugadoEstado(partido.estado)
-                          const colLocal = partido.categoriaColor || '#64748b'
-                          const colVis = '#64748b'
+          {parLoading ? (
+            <Skeleton className="h-64 w-full" />
+          ) : partidosCategoria.length === 0 ? (
+            <EmptyState
+              icon={Calendar}
+              title="Sin partidos en esta categoría"
+              description="Genera el fixture (todos contra todos) o crea partidos manualmente."
+              action={
+                <Button type="button" variant="default" onClick={() => setFixtureOpen(true)}>
+                  Generar fixture
+                </Button>
+              }
+            />
+          ) : (
+            jornadas.map((jornada) => {
+              const partidosJornada = partidosCategoria.filter((p) => p.jornada === jornada)
+              return (
+                <Card key={jornada}>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Jornada {jornada}</CardTitle>
+                    <CardDescription>{partidosJornada.length} partidos — solo emparejamientos</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {partidosJornada.map((partido) => {
+                        const played = isJugadoEstado(partido.estado)
+                        const colLocal = partido.categoriaColor || '#64748b'
+                        const colVis = '#64748b'
 
-                          return (
-                            <Card key={partido.id} className="overflow-hidden">
-                              <div className="p-4">
-                                <div className="mb-3 flex items-center justify-between">
-                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                    <Calendar className="h-3 w-3" />
-                                    {partido.fecha ? formatDate(partido.fecha) : 'Fecha por definir'}
-                                  </div>
-                                  <Badge variant={played ? 'default' : isProgramadoEstado(partido.estado) ? 'secondary' : 'outline'}>
-                                    {played ? 'Jugado' : isProgramadoEstado(partido.estado) ? 'Programado' : partido.estado || 'Pendiente'}
-                                  </Badge>
+                        return (
+                          <Card key={partido.id} className="overflow-hidden">
+                            <div className="p-4">
+                              <div className="mb-3 flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <Calendar className="h-3 w-3" />
+                                  {partido.fecha ? formatDate(partido.fecha) : 'Sin fecha base'}
+                                </div>
+                                <Badge
+                                  variant={
+                                    played ? 'default' : isProgramadoEstado(partido.estado) ? 'secondary' : 'outline'
+                                  }
+                                >
+                                  {played
+                                    ? 'Jugado'
+                                    : isProgramadoEstado(partido.estado)
+                                      ? 'Programado'
+                                      : 'Pendiente de programar'}
+                                </Badge>
+                              </div>
+
+                              <div className="mb-3 flex items-center justify-between gap-2">
+                                <div className="flex min-w-0 flex-1 items-center gap-2">
+                                  <TeamAvatar
+                                    nombre={partido.equipoLocalNombre}
+                                    color={colLocal}
+                                    logoUrl={partido.equipoLocalLogoUrl}
+                                  />
+                                  <span className="truncate text-sm font-medium">{partido.equipoLocalNombre}</span>
                                 </div>
 
-                                <div className="mb-3 flex items-center justify-between">
-                                  <div className="flex flex-1 items-center gap-2">
-                                    <div
-                                      className="flex h-8 w-8 items-center justify-center rounded text-xs font-bold text-white"
-                                      style={{ backgroundColor: colLocal }}
-                                    >
-                                      {initials(partido.equipoLocalNombre || 'L')}
-                                    </div>
-                                    <span className="truncate text-sm font-medium">{partido.equipoLocalNombre}</span>
+                                {played ? (
+                                  <div className="mx-1 flex min-w-[50px] items-center justify-center rounded bg-secondary px-2 py-1 text-secondary-foreground">
+                                    <span className="font-bold">{partido.golesLocal ?? '—'}</span>
+                                    <span className="mx-1">-</span>
+                                    <span className="font-bold">{partido.golesVisitante ?? '—'}</span>
                                   </div>
+                                ) : (
+                                  <span className="mx-1 shrink-0 text-muted-foreground">vs</span>
+                                )}
 
-                                  {played ? (
-                                    <div className="mx-2 flex min-w-[50px] items-center justify-center rounded bg-secondary px-2 py-1 text-secondary-foreground">
-                                      <span className="font-bold">{partido.golesLocal ?? '—'}</span>
-                                      <span className="mx-1">-</span>
-                                      <span className="font-bold">{partido.golesVisitante ?? '—'}</span>
-                                    </div>
-                                  ) : (
-                                    <span className="mx-2 text-muted-foreground">vs</span>
-                                  )}
-
-                                  <div className="flex flex-1 items-center justify-end gap-2">
-                                    <span className="truncate text-sm font-medium">{partido.equipoVisitanteNombre}</span>
-                                    <div
-                                      className="flex h-8 w-8 items-center justify-center rounded text-xs font-bold text-white"
-                                      style={{ backgroundColor: colVis }}
-                                    >
-                                      {initials(partido.equipoVisitanteNombre || 'V')}
-                                    </div>
-                                  </div>
+                                <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+                                  <span className="truncate text-sm font-medium">{partido.equipoVisitanteNombre}</span>
+                                  <TeamAvatar
+                                    nombre={partido.equipoVisitanteNombre}
+                                    color={colVis}
+                                    logoUrl={partido.equipoVisitanteLogoUrl}
+                                  />
                                 </div>
+                              </div>
 
-                                <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
-                                  <div className="flex items-center gap-3">
-                                    <span className="flex items-center gap-1">
-                                      <Clock className="h-3 w-3" />
-                                      {partido.hora || '—'}
-                                    </span>
-                                    <span className="flex items-center gap-1">
-                                      <MapPin className="h-3 w-3" />
-                                      {partido.cancha || '—'}
-                                    </span>
-                                  </div>
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
+                                <span>
+                                  Hora y cancha se definen en <strong>Sorteo de horarios</strong>, no aquí.
+                                </span>
+                                <div className="flex gap-1">
+                                  <Button variant="ghost" size="sm" onClick={() => openEdit(partido)}>
+                                    <Edit className="h-3 w-3" />
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => void eliminarPartido(partido)}>
+                                    <Trash2 className="h-3 w-3 text-destructive" />
+                                  </Button>
                                   {onOpenActa && (
                                     <Button variant="ghost" size="sm" onClick={onOpenActa}>
-                                      <Edit className="mr-1 h-3 w-3" />
                                       Acta
                                     </Button>
                                   )}
                                 </div>
                               </div>
-                            </Card>
-                          )
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              })
-            )}
-          </TabsContent>
+                            </div>
+                          </Card>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })
+          )}
+        </TabsContent>
 
-          <TabsContent value="fecha" className="space-y-4">
-            {fechasOrdenadas.length === 0 ? (
-              <EmptyState icon={Calendar} title="Sin fechas en el fixture" description="No hay fechas agrupables para los partidos actuales." />
-            ) : (
-              fechasOrdenadas.map((fecha) => {
-                const partidosFecha = partidosPorFecha[fecha] ?? []
-                const conflicts = findConflictIdsForFecha([...partidosFecha].sort((a, b) => a.hora.localeCompare(b.hora)))
-                const hasConflicts = conflicts.length > 0
+        <TabsContent value="sorteo" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Sorteo de Horarios</CardTitle>
+              <CardDescription>
+                Partidos de la categoría seleccionada que aún no tienen fila en programaciones. Usa canchas y horarios
+                de Configuración.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1">
+                  <Label>Primera fecha a usar</Label>
+                  <Input type="date" value={sorteoFecha} onChange={(e) => setSorteoFecha(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Días a explorar</Label>
+                  <Input value={sorteoDias} onChange={(e) => setSorteoDias(e.target.value)} className="w-24" />
+                </div>
+                <Button
+                  type="button"
+                  disabled={pendientesProgramar.length === 0}
+                  onClick={() => void ejecutarSorteo()}
+                >
+                  <Shuffle className="mr-2 h-4 w-4" />
+                  Asignar al azar
+                </Button>
+              </div>
 
-                return (
-                  <Card key={fecha}>
-                    <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <CardTitle className="flex items-center gap-2 text-lg">
-                            {fecha === 'sin-fecha' ? 'Sin fecha' : formatDate(fecha)}
-                            {hasConflicts && (
-                              <Badge variant="destructive" className="flex items-center gap-1">
-                                <AlertTriangle className="h-3 w-3" />
-                                Conflicto
-                              </Badge>
-                            )}
-                          </CardTitle>
-                          <CardDescription>{partidosFecha.length} partidos</CardDescription>
-                        </div>
+              {pendientesProgramar.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Jornada</TableHead>
+                      <TableHead>Partido</TableHead>
+                      <TableHead>Fecha base (fixture)</TableHead>
+                      <TableHead className="text-right">Programar</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pendientesProgramar.map((partido) => (
+                      <TableRow key={partido.id}>
+                        <TableCell>Jornada {partido.jornada}</TableCell>
+                        <TableCell>
+                          {partido.equipoLocalNombre} vs {partido.equipoVisitanteNombre}
+                        </TableCell>
+                        <TableCell>{partido.fecha ? formatDate(partido.fecha) : '—'}</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setProgPartido(partido)
+                              setProgFecha(sorteoFecha)
+                              setProgHora('09:00')
+                              setProgCancha(canchas[0]?.id ?? '')
+                            }}
+                          >
+                            Manual
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <EmptyState
+                  icon={Calendar}
+                  title="Nada pendiente"
+                  description="Todos los partidos de esta categoría ya tienen programación, o no hay partidos en el fixture."
+                />
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="fecha" className="space-y-4">
+          {fechasOrdenadas.length === 0 ? (
+            <EmptyState
+              icon={Calendar}
+              title="Sin partidos programados"
+              description="Aquí solo aparecen partidos con fecha, hora y cancha en programaciones. Usa Sorteo de horarios primero."
+            />
+          ) : (
+            fechasOrdenadas.map((fecha) => {
+              const partidosFecha = partidosPorFecha[fecha] ?? []
+              const conflicts = findConflictIdsForFecha([...partidosFecha].sort((a, b) => a.hora.localeCompare(b.hora)))
+              const hasConflicts = conflicts.length > 0
+
+              return (
+                <Card key={fecha}>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-2 text-lg">
+                          {fecha === 'sin-fecha' ? 'Sin fecha' : formatDate(fecha)}
+                          {hasConflicts && (
+                            <Badge variant="destructive" className="flex items-center gap-1">
+                              <AlertTriangle className="h-3 w-3" />
+                              Conflicto
+                            </Badge>
+                          )}
+                        </CardTitle>
+                        <CardDescription>{partidosFecha.length} partidos programados</CardDescription>
                       </div>
-                    </CardHeader>
-                    <CardContent>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Hora</TableHead>
-                            <TableHead>Categoría</TableHead>
-                            <TableHead>Local</TableHead>
-                            <TableHead className="text-center">Resultado</TableHead>
-                            <TableHead>Visitante</TableHead>
-                            <TableHead>Cancha</TableHead>
-                            <TableHead>Estado</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {[...partidosFecha]
-                            .sort((a, b) => String(a.hora).localeCompare(String(b.hora)))
-                            .map((partido) => {
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Hora</TableHead>
+                          <TableHead>Categoría</TableHead>
+                          <TableHead>Local</TableHead>
+                          <TableHead className="text-center">Resultado</TableHead>
+                          <TableHead>Visitante</TableHead>
+                          <TableHead>Cancha</TableHead>
+                          <TableHead>Estado</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {[...partidosFecha]
+                          .sort((a, b) => String(a.hora).localeCompare(String(b.hora)))
+                          .map((partido) => {
                             const played = isJugadoEstado(partido.estado)
                             const isConflict = conflicts.includes(partido.id)
 
@@ -358,7 +846,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex items-center gap-2">
-                                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: partido.categoriaColor }} />
+                                    <TeamAvatar
+                                      nombre={partido.equipoLocalNombre}
+                                      color={partido.categoriaColor}
+                                      logoUrl={partido.equipoLocalLogoUrl}
+                                    />
                                     {partido.equipoLocalNombre}
                                   </div>
                                 </TableCell>
@@ -373,7 +865,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex items-center gap-2">
-                                    <div className="h-3 w-3 rounded-full bg-muted-foreground/30" />
+                                    <TeamAvatar
+                                      nombre={partido.equipoVisitanteNombre}
+                                      color="#64748b"
+                                      logoUrl={partido.equipoVisitanteLogoUrl}
+                                    />
                                     {partido.equipoVisitanteNombre}
                                   </div>
                                 </TableCell>
@@ -381,101 +877,22 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   {partido.cancha || '—'}
                                 </TableCell>
                                 <TableCell>
-                                  <Badge variant={played ? 'default' : isProgramadoEstado(partido.estado) ? 'secondary' : 'outline'}>
-                                    {played ? 'Jugado' : isProgramadoEstado(partido.estado) ? 'Programado' : partido.estado || 'Pendiente'}
+                                  <Badge variant={played ? 'default' : 'secondary'}>
+                                    {played ? 'Jugado' : partido.estado || 'Programado'}
                                   </Badge>
                                 </TableCell>
                               </TableRow>
                             )
                           })}
-                        </TableBody>
-                      </Table>
-                    </CardContent>
-                  </Card>
-                )
-              })
-            )}
-          </TabsContent>
-
-          <TabsContent value="sorteo" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Sorteo de Horarios</CardTitle>
-                <CardDescription>
-                  Partidos sin hora o cancha definida en la categoría seleccionada. La asignación automática se conectará después.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="mb-6 flex items-center justify-between">
-                  <div>
-                    <p className="text-2xl font-bold">{pendientesProgramar.length}</p>
-                    <p className="text-sm text-muted-foreground">Partidos pendientes de horario/cancha</p>
-                  </div>
-                  <Button
-                    disabled={pendientesProgramar.length === 0}
-                    onClick={() => toast.message('La asignación automática de horarios se implementará en una fase posterior.')}
-                  >
-                    <Shuffle className="mr-2 h-4 w-4" />
-                    Asignar Horarios Automáticamente
-                  </Button>
-                </div>
-
-                {pendientesProgramar.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Categoría</TableHead>
-                        <TableHead>Jornada</TableHead>
-                        <TableHead>Partido</TableHead>
-                        <TableHead>Fecha</TableHead>
-                        <TableHead>Hora</TableHead>
-                        <TableHead>Cancha</TableHead>
-                        <TableHead className="text-right">Acciones</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pendientesProgramar.map((partido) => (
-                        <TableRow key={partido.id}>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              style={{ borderColor: partido.categoriaColor, color: partido.categoriaColor }}
-                            >
-                              {partido.categoriaNombre}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>Jornada {partido.jornada}</TableCell>
-                          <TableCell>
-                            {partido.equipoLocalNombre} vs {partido.equipoVisitanteNombre}
-                          </TableCell>
-                          <TableCell>{partido.fecha ? formatDate(partido.fecha) : '—'}</TableCell>
-                          <TableCell className="text-muted-foreground">{partido.hora || 'Sin asignar'}</TableCell>
-                          <TableCell className="text-muted-foreground">{partido.cancha || 'Sin asignar'}</TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => toast.message('Editor de programación: pendiente de conexión con Supabase.')}
-                            >
-                              Programar
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <div className="py-8 text-center text-muted-foreground">
-                    <CheckCircle className="mx-auto mb-4 h-12 w-12 text-success" />
-                    <p className="font-medium">No hay partidos sin horario/cancha en esta categoría</p>
-                    <p className="text-sm">O no hay partidos en la categoría seleccionada.</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      )}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )
+            })
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

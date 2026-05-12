@@ -3,6 +3,7 @@ import {
   cambiarJugadorDeEquipo,
   createJugadorConEquipo,
   desactivarJugador,
+  eliminarJugador,
   getJugadoresByEquipo,
   updateJugador,
   type JugadorCreateInput,
@@ -56,13 +57,23 @@ export function useJugadores(equipoId: string | undefined, categoriaId: string |
     onSuccess: invalidateEquipo,
   })
 
+  const deleteMut = useMutation({
+    mutationFn: (jugadorId: string) => eliminarJugador(jugadorId),
+    onSuccess: invalidateEquipo,
+  })
+
   return {
     ...query,
     createJugador: createMut.mutateAsync,
     updateJugador: updateMut.mutateAsync,
     cambiarJugadorDeEquipo: transferMut.mutateAsync,
     desactivarJugador: deactivateMut.mutateAsync,
+    eliminarJugador: deleteMut.mutateAsync,
     isMutating:
-      createMut.isPending || updateMut.isPending || transferMut.isPending || deactivateMut.isPending,
+      createMut.isPending ||
+      updateMut.isPending ||
+      transferMut.isPending ||
+      deactivateMut.isPending ||
+      deleteMut.isPending,
   }
 }

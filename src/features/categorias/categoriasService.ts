@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import type { CategoriaRow } from '@/types/database'
+import type { CategoriaRow, FormatoCompetencia } from '@/types/database'
 import { mapCategoriaRow, type Categoria } from '@/types/torneo'
 
 function throwOnError<T>(result: { data: T; error: { message: string } | null }): T {
@@ -60,6 +60,7 @@ export type CategoriaInput = {
   orden?: number
   valor_inscripcion: number
   tarifa_arbitraje: number
+  formato: FormatoCompetencia
 }
 
 export async function createCategoria(torneoId: string, data: CategoriaInput): Promise<CategoriaRow> {
@@ -83,13 +84,17 @@ export async function createCategoria(torneoId: string, data: CategoriaInput): P
     activa: true,
     valor_inscripcion: data.valor_inscripcion,
     tarifa_arbitraje: data.tarifa_arbitraje,
+    formato: data.formato,
   }
 
   const result = await supabase.from('categorias').insert(insert).select('*').single()
   return throwOnError(result) as CategoriaRow
 }
 
-export async function updateCategoria(id: string, data: Partial<CategoriaInput> & { activa?: boolean }): Promise<CategoriaRow> {
+export async function updateCategoria(
+  id: string,
+  data: Partial<CategoriaInput> & { activa?: boolean },
+): Promise<CategoriaRow> {
   const patch: Record<string, unknown> = {}
   if (data.nombre !== undefined) patch.nombre = data.nombre
   if (data.rango_edad !== undefined) patch.rango_edad = data.rango_edad
@@ -98,6 +103,7 @@ export async function updateCategoria(id: string, data: Partial<CategoriaInput> 
   if (data.color !== undefined) patch.color = data.color
   if (data.valor_inscripcion !== undefined) patch.valor_inscripcion = data.valor_inscripcion
   if (data.tarifa_arbitraje !== undefined) patch.tarifa_arbitraje = data.tarifa_arbitraje
+  if (data.formato !== undefined) patch.formato = data.formato
   if (data.activa !== undefined) patch.activa = data.activa
   if (data.orden !== undefined) patch.orden = data.orden
 
@@ -107,6 +113,11 @@ export async function updateCategoria(id: string, data: Partial<CategoriaInput> 
 
 export async function toggleCategoria(id: string, activa: boolean): Promise<CategoriaRow> {
   return updateCategoria(id, { activa })
+}
+
+export async function getCategoriaById(id: string): Promise<CategoriaRow | null> {
+  const result = await supabase.from('categorias').select('*').eq('id', id).maybeSingle()
+  return throwOnError(result) as CategoriaRow | null
 }
 
 export async function deleteCategoria(id: string): Promise<void> {

@@ -59,16 +59,32 @@ import { StatCard } from '@/components/common/StatCard'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useFinanzas } from '@/features/finanzas/useFinanzas'
 import { useCategorias } from '@/features/categorias/useCategorias'
 import type { CarteraRowUi, EgresoRow } from '@/features/finanzas/finanzasService'
-import { asRow } from '@/features/_shared/supabaseHelpers'
 
-function labelResumenKey(key: string): string {
-  return key
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+function labelCategoriaGasto(slug: string): string {
+  const m: Record<string, string> = {
+    infraestructura: 'Infraestructura',
+    material_deportivo: 'Material deportivo',
+    premiacion: 'Premiación',
+    administrativo: 'Administrativo',
+    eventos: 'Eventos',
+    arbitraje: 'Arbitraje',
+    otro: 'Otro',
+    material: 'Material deportivo',
+    otros: 'Otro',
+  }
+  return m[slug] ?? slug.replace(/_/g, ' ')
+}
+
+function normalizeEgresoCategoriaSelect(raw: string): string {
+  const v = raw.trim().toLowerCase()
+  if (v === 'material') return 'material_deportivo'
+  if (v === 'otros') return 'otro'
+  return raw
 }
 
 export function FinanzasPage() {
@@ -91,6 +107,7 @@ export function FinanzasPage() {
     valor: '',
     concepto: 'Abono inscripción',
     fecha: new Date().toISOString().slice(0, 10),
+    medioPago: 'efectivo',
   })
 
   const { data: torneo, isLoading: torneoLoading, error: torneoError } = useTorneoActivo()
@@ -128,12 +145,6 @@ export function FinanzasPage() {
     return Math.round((resumen.ingresosCobrados / resumen.ingresosEsperados) * 100)
   }, [resumen])
 
-  const resumenCatColumns = useMemo(() => {
-    const first = resumenPorCategoria[0]
-    if (!first) return [] as string[]
-    return Object.keys(asRow(first)).filter((k) => k !== 'torneo_id')
-  }, [resumenPorCategoria])
-
   const openNewEgreso = () => {
     setEditingEgreso(null)
     setEgresoForm({
@@ -151,7 +162,7 @@ export function FinanzasPage() {
     setEgresoForm({
       fecha: e.fecha.slice(0, 10),
       concepto: e.concepto,
-      categoriaGasto: e.categoriaGasto,
+      categoriaGasto: normalizeEgresoCategoriaSelect(e.categoriaGasto),
       valor: String(e.valor),
       responsable: e.responsable,
     })
@@ -191,7 +202,7 @@ export function FinanzasPage() {
       setIsEgresoDialogOpen(false)
       await refetch()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'No se pudo guardar el egreso')
+      toast.error(translateUserError(e, 'finanzas'))
     }
   }
 
@@ -203,7 +214,7 @@ export function FinanzasPage() {
       setDeleteEgresoId(null)
       await refetch()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'No se pudo eliminar')
+      toast.error(translateUserError(e, 'finanzas'))
     }
   }
 
@@ -228,13 +239,16 @@ export function FinanzasPage() {
         concepto: abonoForm.concepto.trim() || 'Abono',
         fecha: abonoForm.fecha,
         pagoInscripcionId: row.pagoInscripcionId,
+        medioPago: abonoForm.medioPago,
+        referencia: null,
+        observaciones: null,
       })
       toast.success('Abono registrado')
       setIsAbonoDialogOpen(false)
-      setAbonoForm((f) => ({ ...f, valor: '', equipoId: '' }))
+      setAbonoForm((f) => ({ ...f, valor: '', equipoId: '', medioPago: 'efectivo' }))
       await refetch()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'No se pudo registrar el abono')
+      toast.error(translateUserError(e, 'finanzas'))
     }
   }
 
@@ -340,30 +354,47 @@ export function FinanzasPage() {
                     <EmptyState
                       icon={FileText}
                       title="Sin resumen por categoría"
-                      description="Cuando la vista tenga filas para este torneo, se mostrarán aquí."
+                      description="Cuando existan categorías con equipos y movimientos, aquí verás el detalle por categoría."
                     />
                   ) : (
                     <div className="overflow-x-auto">
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            {resumenCatColumns.map((col) => (
-                              <TableHead key={col}>{labelResumenKey(col)}</TableHead>
-                            ))}
+                            <TableHead>Categoría</TableHead>
+                            <TableHead>Valor inscripción</TableHead>
+                            <TableHead className="text-center">Equipos inscritos</TableHead>
+                            <TableHead className="text-right">Esperado</TableHead>
+                            <TableHead className="text-right">Cobrado</TableHead>
+                            <TableHead className="text-right">Pendiente</TableHead>
+                            <TableHead className="text-right">Avance</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {resumenPorCategoria.map((row, idx) => {
-                            const r = asRow(row)
+                          {resumenPorCategoria.map((raw, idx) => {
+                            const row = raw as Record<string, unknown>
+                            const nombre = String(row.categoria ?? '—')
+                            const color = String(row.color ?? '#64748b')
+                            const vi = Number(row.valor_inscripcion ?? 0)
+                            const eq = Number(row.equipos_inscritos ?? 0)
+                            const esp = Number(row.esperado ?? 0)
+                            const cob = Number(row.cobrado ?? 0)
+                            const pend = Number(row.pendiente ?? 0)
+                            const av = Number(row.avance_porcentaje ?? 0)
                             return (
                               <TableRow key={idx}>
-                                {resumenCatColumns.map((col) => (
-                                  <TableCell key={col}>
-                                    {r[col] != null && typeof r[col] === 'number'
-                                      ? formatCurrency(Number(r[col]))
-                                      : String(r[col] ?? '—')}
-                                  </TableCell>
-                                ))}
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+                                    <span className="font-medium">{nombre}</span>
+                                  </div>
+                                </TableCell>
+                                <TableCell>{formatCurrency(vi)}</TableCell>
+                                <TableCell className="text-center">{eq}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(esp)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(cob)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(pend)}</TableCell>
+                                <TableCell className="text-right">{Math.round(av)}%</TableCell>
                               </TableRow>
                             )
                           })}
@@ -463,7 +494,6 @@ export function FinanzasPage() {
                             {cartera.map((c) => (
                               <SelectItem key={c.equipoId} value={c.equipoId}>
                                 {c.equipoNombre} — saldo {formatCurrency(c.saldo)}
-                                {!c.pagoInscripcionId ? ' (sin pago_inscripcion)' : ''}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -485,12 +515,31 @@ export function FinanzasPage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Fecha</Label>
+                        <Label>Fecha de pago</Label>
                         <Input
                           type="date"
                           value={abonoForm.fecha}
                           onChange={(e) => setAbonoForm((f) => ({ ...f, fecha: e.target.value }))}
                         />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Medio de pago</Label>
+                        <Select
+                          value={abonoForm.medioPago}
+                          onValueChange={(v) => setAbonoForm((f) => ({ ...f, medioPago: v }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="efectivo">Efectivo</SelectItem>
+                            <SelectItem value="transferencia">Transferencia</SelectItem>
+                            <SelectItem value="nequi">Nequi</SelectItem>
+                            <SelectItem value="daviplata">Daviplata</SelectItem>
+                            <SelectItem value="bancolombia">Bancolombia</SelectItem>
+                            <SelectItem value="otro">Otro</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                     <DialogFooter>
@@ -599,7 +648,7 @@ export function FinanzasPage() {
                               </Button>
                             )}
                             {row.saldo > 0 && !row.pagoInscripcionId && (
-                              <span className="text-xs text-muted-foreground">Sin pago_inscripcion</span>
+                              <span className="text-xs text-muted-foreground">Sin registro de inscripción</span>
                             )}
                           </div>
                         </TableCell>
@@ -661,12 +710,12 @@ export function FinanzasPage() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="infraestructura">Infraestructura</SelectItem>
-                            <SelectItem value="material">Material deportivo</SelectItem>
+                            <SelectItem value="material_deportivo">Material deportivo</SelectItem>
                             <SelectItem value="arbitraje">Arbitraje</SelectItem>
                             <SelectItem value="premiacion">Premiación</SelectItem>
                             <SelectItem value="administrativo">Administrativo</SelectItem>
                             <SelectItem value="eventos">Eventos</SelectItem>
-                            <SelectItem value="otros">Otros</SelectItem>
+                            <SelectItem value="otro">Otro</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -730,7 +779,7 @@ export function FinanzasPage() {
                         <TableCell className="font-medium">{formatDate(egreso.fecha)}</TableCell>
                         <TableCell>{egreso.concepto}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{egreso.categoriaGasto}</Badge>
+                          <Badge variant="secondary">{labelCategoriaGasto(egreso.categoriaGasto)}</Badge>
                         </TableCell>
                         <TableCell className="text-right font-medium text-destructive">
                           -{formatCurrency(egreso.valor)}

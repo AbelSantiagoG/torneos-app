@@ -6,7 +6,7 @@ import {
   mapVwPartidoRow,
   type PartidoDashboardUi,
 } from '@/features/partidos/partidosUi'
-import { findConflictsPorFecha, groupByFecha, listPartidosTorneo } from '@/features/partidos/partidosService'
+import { findConflictsPorFecha, groupByFecha, listPartidosProgramadosTorneo } from '@/features/partidos/partidosService'
 
 export type { PartidoDashboardUi }
 
@@ -45,7 +45,7 @@ export type DashboardConflictsInfo = {
 }
 
 export async function getDashboardConflicts(torneoId: string): Promise<DashboardConflictsInfo> {
-  const partidos = await listPartidosTorneo(torneoId)
+  const partidos = await listPartidosProgramadosTorneo(torneoId)
   const byFecha = groupByFecha(partidos)
   const ids = findConflictsPorFecha(byFecha)
   if (!ids.length) return { hasConflicts: false, detalle: null, ids: [] }

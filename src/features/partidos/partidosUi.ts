@@ -4,17 +4,22 @@ export type PartidoDashboardUi = {
   id: string
   fecha: string
   hora: string
+  horaFin?: string
   cancha: string
+  canchaId?: string | null
   estado: string
   categoriaId: string
   categoriaNombre: string
   categoriaColor: string
   equipoLocalNombre: string
   equipoVisitanteNombre: string
+  equipoLocalLogoUrl?: string | null
+  equipoVisitanteLogoUrl?: string | null
   golesLocal: number | null
   golesVisitante: number | null
   equipoLocalId?: string | null
   equipoVisitanteId?: string | null
+  programacionId?: string | null
 }
 
 export function mapVwPartidoRow(row: Record<string, unknown>): PartidoDashboardUi {
@@ -56,11 +61,10 @@ export function isJugadoEstado(estado: string): boolean {
 export function isProgramadoEstado(estado: string): boolean {
   const e = estado.toLowerCase()
   if (isJugadoEstado(estado)) return false
+  if (e === 'pendiente_programar' || e.includes('pendiente de program')) return false
   return (
-    e.includes('program') ||
-    e.includes('pend') ||
+    e === 'programado' ||
     e.includes('agend') ||
-    e === 'por_jugar' ||
-    e === 'programado'
+    e === 'por_jugar'
   )
 }

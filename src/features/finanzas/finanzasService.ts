@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { asRow, pickNum, pickStr, throwOnError } from '@/features/_shared/supabaseHelpers'
 import type { ResumenFinancieroUi } from '@/features/dashboard/dashboardService'
+import { toFriendlyError } from '@/lib/errorMessages'
 
 export type CarteraRowUi = {
   equipoId: string
@@ -33,18 +34,13 @@ function mapResumenFromRow(row: Record<string, unknown>): ResumenFinancieroUi {
     ingresosCobrados: pickNum(row, 'ingresos_cobrados', 'total_cobrado', 'cobrado'),
     carteraPendiente: pickNum(row, 'cartera_pendiente', 'pendiente', 'saldo_pendiente'),
     totalEgresos: pickNum(row, 'total_egresos', 'egresos'),
-    resultado: pickNum(row, 'resultado', 'balance', 'resultado_neto'),
+    resultado: pickNum(row, 'resultado_neto', 'resultado', 'balance'),
   }
 }
 
 export async function fetchResumenFinanciero(torneoId: string): Promise<ResumenFinancieroUi> {
   const r = await supabase.from('vw_resumen_financiero').select('*').eq('torneo_id', torneoId).maybeSingle()
   if (!r.error && r.data) return mapResumenFromRow(asRow(r.data))
-  const r2 = await supabase.from('vw_resumen_financiero').select('*').limit(1).maybeSingle()
-  if (!r2.error && r2.data) {
-    const row = asRow(r2.data)
-    if (!pickStr(row, 'torneo_id') || pickStr(row, 'torneo_id') === torneoId) return mapResumenFromRow(row)
-  }
   return {
     ingresosEsperados: 0,
     ingresosCobrados: 0,
@@ -57,39 +53,23 @@ export async function fetchResumenFinanciero(torneoId: string): Promise<ResumenF
 export async function fetchResumenPorCategoria(torneoId: string): Promise<ResumenCategoriaRow[]> {
   const r = await supabase.from('vw_resumen_financiero_categoria').select('*').eq('torneo_id', torneoId)
   if (!r.error && r.data?.length) return r.data as ResumenCategoriaRow[]
-  const r2 = await supabase.from('vw_resumen_financiero_categoria').select('*')
-  if (r2.error || !r2.data) return []
-  return (r2.data as ResumenCategoriaRow[]).filter((row) => pickStr(asRow(row), 'torneo_id') === torneoId)
-}
-
-export async function fetchCarteraRows(torneoId: string): Promise<CarteraRowUi[]> {
-  const v = await supabase.from('vw_cartera').select('*').eq('torneo_id', torneoId)
-  if (!v.error && v.data?.length) {
-    return (v.data as Record<string, unknown>[]).map(mapCarteraVwRow)
-  }
-  const v2 = await supabase.from('vw_cartera').select('*')
-  if (!v2.error && v2.data) {
-    const rows = (v2.data as Record<string, unknown>[]).filter((x) => pickStr(x, 'torneo_id') === torneoId)
-    if (rows.length) return rows.map(mapCarteraVwRow)
-  }
-
-  return buildCarteraFromTables(torneoId)
+  return []
 }
 
 function mapCarteraVwRow(row: Record<string, unknown>): CarteraRowUi {
-  const valorInscripcion = pickNum(row, 'valor_inscripcion', 'valor_total', 'monto_esperado', 'valor_esperado')
-  const totalAbonado = pickNum(row, 'total_abonado', 'abonado', 'monto_pagado', 'cobrado')
-  const saldo = Math.max(0, pickNum(row, 'saldo', 'saldo_pendiente', 'pendiente') || valorInscripcion - totalAbonado)
+  const valorInscripcion = pickNum(row, 'valor_total', 'valor_inscripcion', 'valor_esperado', 'monto_esperado')
+  const totalAbonado = pickNum(row, 'valor_abonado', 'total_abonado', 'abonado', 'monto_pagado', 'cobrado')
+  const saldo = pickNum(row, 'saldo', 'saldo_pendiente', 'pendiente') || Math.max(0, valorInscripcion - totalAbonado)
   let estado: CarteraRowUi['estado'] = 'pendiente'
   if (saldo <= 0) estado = 'al_dia'
   else if (totalAbonado <= 0) estado = 'vencido'
 
   return {
     equipoId: pickStr(row, 'equipo_id', 'id_equipo'),
-    equipoNombre: pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo'),
-    equipoColor: pickStr(row, 'equipo_color', 'color') || '#64748b',
+    equipoNombre: pickStr(row, 'equipo', 'equipo_nombre', 'nombre_equipo'),
+    equipoColor: pickStr(row, 'color', 'equipo_color') || '#64748b',
     categoriaId: pickStr(row, 'categoria_id'),
-    categoriaNombre: pickStr(row, 'categoria_nombre', 'nombre_categoria'),
+    categoriaNombre: pickStr(row, 'categoria', 'categoria_nombre', 'nombre_categoria'),
     categoriaColor: pickStr(row, 'categoria_color') || '#64748b',
     valorInscripcion,
     totalAbonado,
@@ -97,6 +77,14 @@ function mapCarteraVwRow(row: Record<string, unknown>): CarteraRowUi {
     estado,
     pagoInscripcionId: pickStr(row, 'pago_inscripcion_id', 'id_pago_inscripcion') || null,
   }
+}
+
+export async function fetchCarteraRows(torneoId: string): Promise<CarteraRowUi[]> {
+  const v = await supabase.from('vw_cartera').select('*').eq('torneo_id', torneoId)
+  if (!v.error && v.data?.length) {
+    return (v.data as Record<string, unknown>[]).map(mapCarteraVwRow)
+  }
+  return buildCarteraFromTables(torneoId)
 }
 
 async function buildCarteraFromTables(torneoId: string): Promise<CarteraRowUi[]> {
@@ -145,7 +133,8 @@ async function buildCarteraFromTables(torneoId: string): Promise<CarteraRowUi[]>
     const pago = pagoByEquipo.get(eq.id)
     const esperado =
       pago != null
-        ? pickNum(pago.row, 'valor_esperado', 'monto_esperado', 'valor_inscripcion', 'monto_total') || valor
+        ? pickNum(pago.row, 'valor_total', 'valor_esperado', 'monto_esperado', 'valor_inscripcion', 'monto_total') ||
+          valor
         : valor
     const abonado = abonoByEquipo.get(eq.id) ?? 0
     const saldo = Math.max(0, esperado - abonado)
@@ -171,21 +160,18 @@ async function buildCarteraFromTables(torneoId: string): Promise<CarteraRowUi[]>
 export async function listEgresos(torneoId: string): Promise<EgresoRow[]> {
   const r = await supabase.from('egresos').select('*').eq('torneo_id', torneoId).order('fecha', { ascending: false })
   if (!r.error) return ((r.data ?? []) as Record<string, unknown>[]).map(mapEgresoRow)
-
-  const r2 = await supabase.from('egresos').select('*').order('fecha', { ascending: false })
-  if (r2.error) throw new Error(r2.error.message)
-  return ((r2.data ?? []) as Record<string, unknown>[])
-    .filter((row) => pickStr(row, 'torneo_id') === torneoId)
-    .map(mapEgresoRow)
+  if (r.error) throw toFriendlyError(r.error, 'finanzas')
+  return []
 }
 
 function mapEgresoRow(row: Record<string, unknown>): EgresoRow {
   const fecha = pickStr(row, 'fecha', 'fecha_gasto', 'created_at').slice(0, 10)
+  const catRaw = row.categoria ?? row.categoria_gasto ?? row.categoriaGasto
   return {
     id: pickStr(row, 'id'),
     fecha: fecha || pickStr(row, 'created_at').slice(0, 10),
     concepto: pickStr(row, 'concepto', 'descripcion'),
-    categoriaGasto: pickStr(row, 'categoria_gasto', 'categoriaGasto', 'categoria', 'tipo'),
+    categoriaGasto: catRaw != null ? String(catRaw) : '',
     valor: pickNum(row, 'valor', 'monto', 'importe'),
     responsable: pickStr(row, 'responsable', 'registrado_por', 'usuario'),
   }
@@ -197,29 +183,49 @@ export type EgresoInput = {
   categoriaGasto: string
   valor: number
   responsable: string
+  observaciones?: string | null
+  soporteUrl?: string | null
+}
+
+/** Valores enum `categoria_gasto` en Postgres (coinciden con RPC). */
+export type CategoriaGastoDb =
+  | 'infraestructura'
+  | 'material_deportivo'
+  | 'premiacion'
+  | 'administrativo'
+  | 'eventos'
+  | 'arbitraje'
+  | 'otro'
+
+export function mapUiCategoriaGastoToDb(ui: string): CategoriaGastoDb {
+  const v = ui.trim().toLowerCase()
+  const map: Record<string, CategoriaGastoDb> = {
+    infraestructura: 'infraestructura',
+    material: 'material_deportivo',
+    material_deportivo: 'material_deportivo',
+    premiacion: 'premiacion',
+    administrativo: 'administrativo',
+    eventos: 'eventos',
+    arbitraje: 'arbitraje',
+    otros: 'otro',
+    otro: 'otro',
+  }
+  return map[v] ?? 'otro'
 }
 
 export async function createEgreso(torneoId: string, input: EgresoInput): Promise<void> {
-  const payload: Record<string, unknown> = {
-    torneo_id: torneoId,
-    fecha: input.fecha,
-    concepto: input.concepto,
-    valor: input.valor,
-    categoria_gasto: input.categoriaGasto,
-    responsable: input.responsable,
-  }
-  let r = await supabase.from('egresos').insert(payload)
-  if (r.error) {
-    r = await supabase.from('egresos').insert({
-      torneo_id: torneoId,
-      fecha: input.fecha,
-      concepto: input.concepto,
-      valor: input.valor,
-      categoriaGasto: input.categoriaGasto,
-      responsable: input.responsable,
-    })
-  }
-  if (r.error) throw new Error(r.error.message)
+  const categoria = mapUiCategoriaGastoToDb(input.categoriaGasto)
+  const { error } = await supabase.rpc('crear_egreso_seguro', {
+    p_torneo_id: torneoId,
+    p_fecha: input.fecha,
+    p_concepto: input.concepto,
+    p_categoria: categoria,
+    p_valor: input.valor,
+    p_responsable: input.responsable || null,
+    p_observaciones: input.observaciones ?? null,
+    p_soporte_url: input.soporteUrl ?? null,
+  })
+  if (error) throw toFriendlyError(error, 'finanzas')
 }
 
 export async function updateEgreso(id: string, input: Partial<EgresoInput>): Promise<void> {
@@ -227,34 +233,32 @@ export async function updateEgreso(id: string, input: Partial<EgresoInput>): Pro
   if (input.fecha !== undefined) patch.fecha = input.fecha
   if (input.concepto !== undefined) patch.concepto = input.concepto
   if (input.valor !== undefined) patch.valor = input.valor
-  if (input.categoriaGasto !== undefined) {
-    patch.categoria_gasto = input.categoriaGasto
-    patch.categoriaGasto = input.categoriaGasto
-  }
+  if (input.categoriaGasto !== undefined) patch.categoria = mapUiCategoriaGastoToDb(input.categoriaGasto)
   if (input.responsable !== undefined) patch.responsable = input.responsable
+  if (input.observaciones !== undefined) patch.observaciones = input.observaciones
+  if (input.soporteUrl !== undefined) patch.soporte_url = input.soporteUrl
 
-  let r = await supabase.from('egresos').update(patch).eq('id', id)
-  if (r.error) {
-    const patch2 = { ...input }
-    r = await supabase.from('egresos').update(patch2).eq('id', id)
-  }
-  if (r.error) throw new Error(r.error.message)
+  const r = await supabase.from('egresos').update(patch).eq('id', id)
+  if (r.error) throw toFriendlyError(r.error, 'finanzas')
 }
 
 export async function deleteEgreso(id: string): Promise<void> {
   const r = await supabase.from('egresos').delete().eq('id', id)
-  if (r.error) throw new Error(r.error.message)
+  if (r.error) throw toFriendlyError(r.error, 'finanzas')
 }
 
 export type AbonoInput = {
   equipoId: string
   valor: number
-  concepto: string
+  concepto?: string
   fecha: string
   pagoInscripcionId?: string | null
+  medioPago?: string
+  referencia?: string | null
+  observaciones?: string | null
 }
 
-export async function createAbono(torneoId: string, input: AbonoInput): Promise<void> {
+export async function createAbono(_torneoId: string, input: AbonoInput): Promise<void> {
   let pagoId = input.pagoInscripcionId ?? null
   if (!pagoId) {
     const p = await supabase.from('pagos_inscripcion').select('id').eq('equipo_id', input.equipoId).maybeSingle()
@@ -262,27 +266,20 @@ export async function createAbono(torneoId: string, input: AbonoInput): Promise<
   }
   if (!pagoId) {
     throw new Error(
-      'No hay registro de pago de inscripción para este equipo. El alta de equipo debería crearlo automáticamente; si no existe, crea el pago en Supabase o vuelve a crear el equipo.',
+      'Este equipo no tiene registro de inscripción para cobrar. Si acabas de crear el equipo, recarga la página; si el problema continúa, revisa en Supabase la tabla pagos_inscripcion.',
     )
   }
 
-  const base = {
-    torneo_id: torneoId,
-    equipo_id: input.equipoId,
-    valor: input.valor,
-    concepto: input.concepto,
-    fecha: input.fecha,
-    pago_inscripcion_id: pagoId,
-  }
-  const r = await supabase.from('abonos').insert(base)
-  if (r.error) {
-    const r2 = await supabase.from('abonos').insert({
-      torneo_id: torneoId,
-      equipo_id: input.equipoId,
-      valor: input.valor,
-      concepto: input.concepto,
-      fecha: input.fecha,
-    })
-    if (r2.error) throw new Error(r2.error.message)
-  }
+  const medio = (input.medioPago ?? 'efectivo').toLowerCase()
+  const obs = [input.concepto, input.observaciones].filter(Boolean).join(' — ') || null
+
+  const { error } = await supabase.rpc('registrar_abono_seguro', {
+    p_pago_inscripcion_id: pagoId,
+    p_valor: input.valor,
+    p_fecha_pago: input.fecha,
+    p_medio_pago: medio,
+    p_referencia: input.referencia ?? null,
+    p_observaciones: obs,
+  })
+  if (error) throw toFriendlyError(error, 'finanzas')
 }

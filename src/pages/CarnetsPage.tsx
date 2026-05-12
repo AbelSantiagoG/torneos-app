@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import html2canvas from 'html2canvas'
+import { jsPDF } from 'jspdf'
+import { toast } from 'sonner'
 import { Printer, Download, Award, User } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -20,10 +23,11 @@ import { getEquiposByCategoria } from '@/features/equipos/equiposService'
 import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
 
 export function CarnetsPage() {
+  const printRef = useRef<HTMLDivElement>(null)
   const [selectedCategoria, setSelectedCategoria] = useState('')
   const [selectedEquipo, setSelectedEquipo] = useState('')
 
-  const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
+  const { data: torneo, isLoading: torneoLoading, torneos } = useTorneoActivo()
   const torneoId = torneo?.id
 
   const { data: categorias = [], isLoading: catLoading } = useCategorias(torneoId)
@@ -49,6 +53,55 @@ export function CarnetsPage() {
   const equipo = equiposCategoria.find((e) => e.id === selectedEquipo)
   const categoria = categorias.find((c) => c.id === selectedCategoria)
 
+  const handlePrint = () => {
+    window.print()
+  }
+
+  const handlePdf = async () => {
+    if (!equipo || !torneo || jugadores.length === 0 || !printRef.current) return
+    try {
+      const canvas = await html2canvas(printRef.current, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#f8fafc',
+      })
+      const imgData = canvas.toDataURL('image/png')
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+      const pageW = doc.internal.pageSize.getWidth()
+      const pageH = doc.internal.pageSize.getHeight()
+      const margin = 36
+      const maxW = pageW - margin * 2
+      const ratio = canvas.height / canvas.width
+      let drawW = maxW
+      let drawH = drawW * ratio
+      if (drawH > pageH - margin * 2) {
+        drawH = pageH - margin * 2
+        drawW = drawH / ratio
+      }
+      const x = (pageW - drawW) / 2
+      const y = margin
+      doc.addImage(imgData, 'PNG', x, y, drawW, drawH)
+      doc.save(`carnets-${equipo.nombre.replace(/\s+/g, '-')}.pdf`)
+      toast.success('PDF descargado')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo generar el PDF')
+    }
+  }
+
+  if (!torneoLoading && torneos.length === 0) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Carnets de Jugadores" description="Vista previa de carnets" />
+        <EmptyState
+          icon={Award}
+          title="Sin torneos"
+          description="Crea un torneo primero para generar carnets con datos reales."
+        />
+      </div>
+    )
+  }
+
   if (torneoLoading) {
     return (
       <div className="space-y-6">
@@ -70,15 +123,16 @@ export function CarnetsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        className="print:hidden"
         title="Carnets de Jugadores"
         description="Vista previa con datos reales de jugadores y equipos"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" disabled={!selectedEquipo}>
+            <Button type="button" variant="outline" disabled={!selectedEquipo || jugadores.length === 0} onClick={handlePdf}>
               <Download className="mr-2 h-4 w-4" />
               Exportar PDF
             </Button>
-            <Button disabled={!selectedEquipo}>
+            <Button type="button" disabled={!selectedEquipo || jugadores.length === 0} onClick={handlePrint}>
               <Printer className="mr-2 h-4 w-4" />
               Imprimir
             </Button>
@@ -86,7 +140,7 @@ export function CarnetsPage() {
         }
       />
 
-      <Card>
+      <Card className="print:hidden">
         <CardContent className="pt-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-end">
             <div className="flex-1">
@@ -175,55 +229,60 @@ export function CarnetsPage() {
             </CardHeader>
           </Card>
 
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div ref={printRef} className="grid gap-6 rounded-xl border bg-slate-50 p-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {jugadores.map((jugador) => (
-              <Card key={jugador.id} className="overflow-hidden">
-                <div className="h-2" style={{ backgroundColor: equipo?.color }} />
-                <CardContent className="p-4">
-                  <div className="flex flex-col items-center text-center">
-                    {torneo?.logo_url ? (
-                      <img
-                        src={torneo.logo_url}
-                        alt=""
-                        className="mb-3 h-12 w-12 rounded-full object-cover"
-                      />
+              <Card key={jugador.id} className="overflow-hidden border-0 shadow-lg ring-1 ring-slate-200">
+                <div className="h-1.5 bg-gradient-to-r from-slate-700 via-slate-500 to-slate-700" />
+                <CardContent className="space-y-4 p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {torneo?.logo_url ? (
+                        <img src={torneo.logo_url} alt="" className="h-10 w-10 rounded-full border object-cover" />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-white">
+                          {torneo?.nombre?.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          {torneo?.nombre}
+                        </p>
+                        <p className="truncate text-xs text-slate-600">{categoria?.nombre}</p>
+                      </div>
+                    </div>
+                    {equipo?.logoUrl ? (
+                      <img src={equipo.logoUrl} alt="" className="h-9 w-9 rounded-md border object-cover" />
                     ) : (
-                      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                        <Award className="h-6 w-6" />
+                      <div
+                        className="flex h-9 w-9 items-center justify-center rounded-md text-[10px] font-bold text-white"
+                        style={{ backgroundColor: equipo?.color }}
+                      >
+                        {equipo?.logoPlaceholder}
                       </div>
                     )}
+                  </div>
 
-                    <p className="mb-1 text-xs font-medium text-muted-foreground">{torneo?.nombre}</p>
+                  <div className="mx-auto flex h-28 w-24 items-center justify-center overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-inner">
+                    {jugador.fotoUrl ? (
+                      <img src={jugador.fotoUrl} alt="" className="h-full w-full object-cover" crossOrigin="anonymous" />
+                    ) : (
+                      <User className="h-12 w-12 text-slate-300" />
+                    )}
+                  </div>
 
-                    <div
-                      className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg text-sm font-bold text-white"
-                      style={{ backgroundColor: equipo?.color }}
-                    >
-                      {equipo?.logoPlaceholder}
+                  <div className="text-center">
+                    <h3 className="text-lg font-bold tracking-tight text-slate-900">{jugador.nombre}</h3>
+                    <p className="text-xs font-medium text-slate-500">{equipo?.nombre}</p>
+                  </div>
+
+                  <div className="space-y-1.5 rounded-lg bg-slate-100/80 px-3 py-2 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-slate-500">Documento</span>
+                      <span className="font-semibold text-slate-800">{jugador.documento}</span>
                     </div>
-
-                    <div className="mb-3 flex h-24 w-20 items-center justify-center rounded-lg bg-muted">
-                      <User className="h-10 w-10 text-muted-foreground" />
-                    </div>
-
-                    <h3 className="text-base font-semibold">{jugador.nombre}</h3>
-                    <p className="mb-2 text-sm text-muted-foreground">{equipo?.nombre}</p>
-
-                    <div className="mt-2 w-full space-y-1 border-t pt-3">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Documento:</span>
-                        <span className="font-medium">{jugador.documento}</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Categoría:</span>
-                        <span className="font-medium" style={{ color: categoria?.color }}>
-                          {categoria?.nombre}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Año Nac.:</span>
-                        <span className="font-medium">{jugador.anioNacimiento}</span>
-                      </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-slate-500">Año nac.</span>
+                      <span className="font-semibold text-slate-800">{jugador.anioNacimiento}</span>
                     </div>
                   </div>
                 </CardContent>
