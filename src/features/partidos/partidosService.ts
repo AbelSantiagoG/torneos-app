@@ -18,6 +18,7 @@ type PartidoRowDb = {
   torneo_id: string
   categoria_id: string
   jornada: number | null
+  orden: number | null
   fecha_fixture: string | null
   estado: string
   equipo_local_id: string
@@ -44,7 +45,7 @@ export async function listPartidosFixtureTorneo(
   const p = await supabase
     .from('partidos')
     .select(
-      'id, torneo_id, categoria_id, jornada, fecha_fixture, estado, equipo_local_id, equipo_visitante_id',
+      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id',
     )
     .eq('torneo_id', torneoId)
     .order('categoria_id', { ascending: true })
@@ -64,16 +65,22 @@ export async function listPartidosFixtureTorneo(
 
   const [cats, teams] = await Promise.all([
     supabase.from('categorias').select('id, nombre, color').in('id', catIds),
-    supabase.from('equipos').select('id, nombre, logo_url, color').in('id', [...teamIds]),
+    supabase.from('equipos').select('id, nombre, logo_url, logo_public_id, color').in('id', [...teamIds]),
   ])
 
   const catMap = new Map(
     (throwOnError(cats) as { id: string; nombre: string; color: string | null }[]).map((c) => [c.id, c]),
   )
   const teamMap = new Map(
-    (throwOnError(teams) as { id: string; nombre: string; logo_url: string | null; color: string | null }[]).map(
-      (t) => [t.id, t],
-    ),
+    (
+      throwOnError(teams) as {
+        id: string
+        nombre: string
+        logo_url: string | null
+        logo_public_id: string | null
+        color: string | null
+      }[]
+    ).map((t) => [t.id, t]),
   )
 
   return rows.map((x) => {
@@ -95,11 +102,14 @@ export async function listPartidosFixtureTorneo(
       equipoVisitanteNombre: tv?.nombre ?? '—',
       equipoLocalLogoUrl: tl?.logo_url ?? null,
       equipoVisitanteLogoUrl: tv?.logo_url ?? null,
+      equipoLocalLogoPublicId: tl?.logo_public_id ?? null,
+      equipoVisitanteLogoPublicId: tv?.logo_public_id ?? null,
       golesLocal: null,
       golesVisitante: null,
       equipoLocalId: x.equipo_local_id,
       equipoVisitanteId: x.equipo_visitante_id,
       jornada: x.jornada ?? 0,
+      orden: x.orden ?? 0,
       programacionId: null,
     }
   })
@@ -120,7 +130,7 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
   const pidSet = new Set(prows.map((r) => String(r.partido_id ?? '')))
   const partidosRes = await supabase
     .from('partidos')
-    .select('id, torneo_id, categoria_id, jornada, fecha_fixture, estado, equipo_local_id, equipo_visitante_id')
+    .select('id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id')
     .in('id', [...pidSet])
   const partRows = throwOnError(partidosRes) as PartidoRowDb[]
   const partMap = new Map(partRows.map((pr) => [pr.id, pr]))
@@ -142,15 +152,21 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
   }
   const [cats, teams] = await Promise.all([
     supabase.from('categorias').select('id, nombre, color').in('id', catIds),
-    supabase.from('equipos').select('id, nombre, logo_url, color').in('id', [...teamIds]),
+    supabase.from('equipos').select('id, nombre, logo_url, logo_public_id, color').in('id', [...teamIds]),
   ])
   const catMap = new Map(
     (throwOnError(cats) as { id: string; nombre: string; color: string | null }[]).map((c) => [c.id, c]),
   )
   const teamMap = new Map(
-    (throwOnError(teams) as { id: string; nombre: string; logo_url: string | null; color: string | null }[]).map(
-      (t) => [t.id, t],
-    ),
+    (
+      throwOnError(teams) as {
+        id: string
+        nombre: string
+        logo_url: string | null
+        logo_public_id: string | null
+        color: string | null
+      }[]
+    ).map((t) => [t.id, t]),
   )
 
   const out: PartidoListaUi[] = []
@@ -182,13 +198,44 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
       equipoVisitanteNombre: tv?.nombre ?? '—',
       equipoLocalLogoUrl: tl?.logo_url ?? null,
       equipoVisitanteLogoUrl: tv?.logo_url ?? null,
+      equipoLocalLogoPublicId: tl?.logo_public_id ?? null,
+      equipoVisitanteLogoPublicId: tv?.logo_public_id ?? null,
       golesLocal: null,
       golesVisitante: null,
       equipoLocalId: pr.equipo_local_id,
       equipoVisitanteId: pr.equipo_visitante_id,
       jornada: pr.jornada ?? 0,
+      orden: pr.orden ?? 0,
     })
   }
+
+  const idsOut = out.map((o) => o.id)
+  if (idsOut.length) {
+    const golRes = await supabase.from('goles').select('partido_id, equipo_id').in('partido_id', idsOut)
+    if (!golRes.error && golRes.data?.length) {
+      const byPartido = new Map<string, { l: number; v: number }>()
+      for (const o of out) {
+        const pr = partMap.get(o.id)
+        if (pr) byPartido.set(o.id, { l: 0, v: 0 })
+      }
+      for (const g of golRes.data as { partido_id: string; equipo_id: string }[]) {
+        const pr = partMap.get(g.partido_id)
+        if (!pr) continue
+        const cur = byPartido.get(g.partido_id) ?? { l: 0, v: 0 }
+        if (g.equipo_id === pr.equipo_local_id) cur.l++
+        else if (g.equipo_id === pr.equipo_visitante_id) cur.v++
+        byPartido.set(g.partido_id, cur)
+      }
+      for (const o of out) {
+        const c = byPartido.get(o.id)
+        if (c) {
+          o.golesLocal = c.l
+          o.golesVisitante = c.v
+        }
+      }
+    }
+  }
+
   return out.sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora))
 }
 
@@ -264,9 +311,33 @@ export async function generarFixtureCategoria(categoriaId: string, fechaInicio: 
   throw toUserError(last, 'fixture')
 }
 
+const CRUCE_CANCHA_HORARIO_MSG = 'Ya existe un partido programado en esa cancha durante ese horario.'
+
+async function assertSlotProgramacionLibre(params: {
+  cancha_id: string
+  fecha: string
+  hora_inicio_db: string
+  excluirProgramacionId?: string | null
+}): Promise<void> {
+  const { data, error } = await supabase
+    .from('programaciones_partido')
+    .select('id')
+    .eq('cancha_id', params.cancha_id)
+    .eq('fecha', params.fecha)
+    .eq('hora_inicio', params.hora_inicio_db)
+  if (error) throw toUserError(error, 'programacion')
+  const rows = (data ?? []) as { id: string }[]
+  const ex = params.excluirProgramacionId
+  const ocupado = rows.some((row) => !ex || row.id !== ex)
+  if (ocupado) {
+    throw new Error(CRUCE_CANCHA_HORARIO_MSG)
+  }
+}
+
 export type PartidoFixturePatch = {
   jornada?: number | null
   fecha_fixture?: string | null
+  orden?: number | null
   equipo_local_id?: string
   equipo_visitante_id?: string
   estado?: string
@@ -284,9 +355,27 @@ export type PartidoInsertInput = {
   equipo_visitante_id: string
   jornada?: number | null
   fecha_fixture?: string | null
+  orden?: number | null
 }
 
 export async function createPartidoManual(input: PartidoInsertInput): Promise<string> {
+  const j = input.jornada ?? 1
+  let orden = 0
+  if (input.orden != null && !Number.isNaN(Number(input.orden)) && Number(input.orden) > 0) {
+    orden = Number(input.orden)
+  } else {
+    const maxQ = await supabase
+      .from('partidos')
+      .select('orden')
+      .eq('categoria_id', input.categoria_id)
+      .eq('jornada', j)
+      .order('orden', { ascending: false })
+      .limit(1)
+    if (!maxQ.error && maxQ.data?.[0]) {
+      orden = (Number((maxQ.data[0] as { orden: number | null }).orden) || 0) + 1
+    }
+  }
+
   const r = await supabase
     .from('partidos')
     .insert({
@@ -294,11 +383,11 @@ export async function createPartidoManual(input: PartidoInsertInput): Promise<st
       categoria_id: input.categoria_id,
       equipo_local_id: input.equipo_local_id,
       equipo_visitante_id: input.equipo_visitante_id,
-      jornada: input.jornada ?? 1,
+      jornada: j,
       fecha_fixture: input.fecha_fixture ?? null,
       estado: 'pendiente_programar',
       fase: 'regular',
-      orden: 0,
+      orden,
     })
     .select('id')
     .single()
@@ -320,6 +409,13 @@ export async function upsertProgramacion(
 ): Promise<void> {
   const horaInicio = normalizeHoraDb(input.hora_inicio)
   const horaFin = normalizeHoraDb(input.hora_fin ?? addMinutesToTime(horaInicio, 90))
+
+  await assertSlotProgramacionLibre({
+    cancha_id: input.cancha_id,
+    fecha: input.fecha,
+    hora_inicio_db: horaInicio,
+    excluirProgramacionId: programacionId,
+  })
 
   if (programacionId) {
     const r = await supabase
@@ -364,6 +460,53 @@ function hayCruce(
   hora: string,
 ): boolean {
   return ocupadas.some((o) => o.fecha === fecha && o.canchaId === canchaId && o.hora === hora)
+}
+
+export type SorteoBorradorSlot = { fecha: string; canchaId: string; hora: string }
+
+/** Propone fecha/cancha/hora por partido sin escribir en la base de datos (borrador para revisar antes de guardar). */
+export function generarBorradorSorteo(opts: {
+  pendientes: PartidoListaUi[]
+  programados: PartidoListaUi[]
+  canchas: { id: string }[]
+  horarios: { hora: string }[]
+  fechaInicio: string
+  dias: number
+}): Record<string, SorteoBorradorSlot> {
+  const out: Record<string, SorteoBorradorSlot> = {}
+  if (!opts.canchas.length || !opts.horarios.length || !opts.pendientes.length) return out
+
+  const ocupadas = opts.programados
+    .filter((p) => p.canchaId && p.fecha && p.hora)
+    .map((p) => ({ fecha: p.fecha, canchaId: p.canchaId!, hora: p.hora }))
+
+  const shuffled = [...opts.pendientes].sort(() => Math.random() - 0.5)
+
+  for (const p of shuffled) {
+    let colocado = false
+    for (let d = 0; d < opts.dias && !colocado; d++) {
+      const fecha = addDaysToIsoDate(opts.fechaInicio, d)
+      const ordenCanchas = [...opts.canchas].sort(() => Math.random() - 0.5)
+      const ordenHoras = [...opts.horarios].sort(() => Math.random() - 0.5)
+      for (const c of ordenCanchas) {
+        for (const h of ordenHoras) {
+          const hora = formatHoraUi(normalizeHoraDb(String(h.hora)))
+          if (hayCruce(ocupadas, fecha, c.id, hora)) continue
+          ocupadas.push({ fecha, canchaId: c.id, hora })
+          out[p.id] = { fecha, canchaId: c.id, hora }
+          colocado = true
+          break
+        }
+        if (colocado) break
+      }
+    }
+    if (!colocado) {
+      throw new Error(
+        'No hay suficientes combinaciones de fecha, cancha y hora sin cruce. Amplía el rango de días o revisa horarios en Configuración.',
+      )
+    }
+  }
+  return out
 }
 
 export async function sorteoProgramacionesTorneoCategoria(

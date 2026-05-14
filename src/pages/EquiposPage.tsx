@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, Upload, Users, Edit, Trash2, AlertCircle, CheckCircle, Search, UserPlus, ArrowRightLeft } from 'lucide-react'
+import { Plus, Upload, Users, Edit, Trash2, AlertCircle, CheckCircle, Search, UserPlus, ArrowRightLeft, Download, User } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -48,13 +48,16 @@ import { parseSpreadsheetToRows } from '@/features/excel/parseSheet'
 import { importEquiposFromRows } from '@/features/excel/importEquipos'
 import { importJugadoresFromRows } from '@/features/excel/importJugadores'
 import {
-  PLANTILLA_EQUIPOS_CSV,
-  PLANTILLA_JUGADORES_CSV,
   DESCRIPCION_IMPORT_EQUIPOS,
   DESCRIPCION_IMPORT_JUGADORES,
 } from '@/features/excel/plantillasImportacion'
+import { downloadPlantillaEquiposXlsx, downloadPlantillaJugadoresXlsx } from '@/features/excel/xlsxTemplates'
 import { translateUserError } from '@/lib/errorMessages'
-import { uploadImage } from '@/features/uploads/uploadService'
+import {
+  displayImagePresets,
+  resolveDisplayImageUrl,
+  uploadImage,
+} from '@/features/uploads/uploadService'
 import { PageHeader } from '@/components/common/PageHeader'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias, categoriasQueryKey } from '@/features/categorias/useCategorias'
@@ -71,15 +74,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 export function EquiposPage() {
   const qc = useQueryClient()
 
-  const downloadCsv = (filename: string, content: string) => {
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
-  }
+  const [importReport, setImportReport] = useState<{
+    titulo: string
+    creados: number
+    omitidos: string[]
+    errores: { fila: number; mensaje: string }[]
+  } | null>(null)
   const { data: torneo, isLoading: torneoLoading, torneos } = useTorneoActivo()
   const torneoId = torneo?.id
 
@@ -306,7 +306,7 @@ export function EquiposPage() {
         fotoPublicId: null,
       })
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al crear jugador')
+      toast.error(translateUserError(e, 'jugador'))
     }
   }
 
@@ -325,18 +325,23 @@ export function EquiposPage() {
     try {
       const rows = await parseSpreadsheetToRows(file)
       const res = await importEquiposFromRows(rows, { torneoId, categoriaId: selectedCategoria })
-      toast.success(`Importación: ${res.creados} equipos creados.`)
+      setImportReport({
+        titulo: 'Importación de equipos',
+        creados: res.creados,
+        omitidos: res.omitidos,
+        errores: res.errores,
+      })
+      toast.success(`Equipos: ${res.creados} creados.`)
       if (res.omitidos.length) {
-        toast.message(`Omitidos (${res.omitidos.length}): ${res.omitidos.slice(0, 8).join('; ')}${res.omitidos.length > 8 ? '…' : ''}`)
+        toast.message('Algunas filas se omitieron por duplicados en el archivo o porque ya existían en la categoría.')
       }
       if (res.errores.length) {
-        toast.error(`${res.errores.length} filas con error. Revisa la consola o el archivo.`)
-        console.warn(res.errores)
+        toast.error('Hay filas con errores. Revisa el resumen.')
       }
       void qc.invalidateQueries({ queryKey: equiposQueryKey(selectedCategoria) })
       void qc.invalidateQueries({ queryKey: categoriasQueryKey(torneoId) })
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'No se pudo importar el archivo.')
+      toast.error(translateUserError(err, 'excel'))
     }
   }
 
@@ -357,13 +362,18 @@ export function EquiposPage() {
     try {
       const rows = await parseSpreadsheetToRows(file)
       const res = await importJugadoresFromRows(rows, eqId)
+      setImportReport({
+        titulo: 'Importación de jugadores',
+        creados: res.creados,
+        omitidos: res.omitidos,
+        errores: res.errores,
+      })
       toast.success(`Jugadores: ${res.creados} creados.`)
       if (res.omitidos.length) {
-        toast.message(`Omitidos (${res.omitidos.length}): ${res.omitidos.slice(0, 6).join('; ')}${res.omitidos.length > 6 ? '…' : ''}`)
+        toast.message('Algunas filas se omitieron por documento duplicado en el archivo o jugador ya existente.')
       }
       if (res.errores.length) {
-        toast.error(`${res.errores.length} filas con error.`)
-        console.warn(res.errores)
+        toast.error('Hay filas con errores. Revisa el resumen.')
       }
       if (catId) {
         void qc.invalidateQueries({ queryKey: equiposQueryKey(catId) })
@@ -371,7 +381,7 @@ export function EquiposPage() {
       }
       void qc.invalidateQueries({ queryKey: jugadoresQueryKey(eqId) })
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'No se pudo importar jugadores.')
+      toast.error(translateUserError(err, 'excel'))
     }
   }
 
@@ -401,7 +411,7 @@ export function EquiposPage() {
       setTransferDialogOpen(false)
       setTransferTarget(null)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al transferir')
+      toast.error(translateUserError(e, 'jugador'))
     }
   }
 
@@ -463,6 +473,48 @@ export function EquiposPage() {
   return (
     <div className="space-y-6">
       <CrearTorneoDialog open={crearTorneoOpen} onOpenChange={setCrearTorneoOpen} />
+      <Dialog open={Boolean(importReport)} onOpenChange={(o) => !o && setImportReport(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Resumen de importación</DialogTitle>
+            <DialogDescription>{importReport?.titulo}</DialogDescription>
+          </DialogHeader>
+          {importReport && (
+            <div className="space-y-3 text-sm">
+              <p>
+                <strong>Creados:</strong> {importReport.creados}
+              </p>
+              <p>
+                <strong>Omitidos:</strong> {importReport.omitidos.length}
+              </p>
+              {importReport.omitidos.length > 0 && (
+                <ul className="max-h-32 list-disc overflow-y-auto pl-5 text-muted-foreground">
+                  {importReport.omitidos.map((o, i) => (
+                    <li key={i}>{o}</li>
+                  ))}
+                </ul>
+              )}
+              <p>
+                <strong>Errores:</strong> {importReport.errores.length}
+              </p>
+              {importReport.errores.length > 0 && (
+                <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-destructive">
+                  {importReport.errores.map((e, i) => (
+                    <li key={i}>
+                      Fila {e.fila}: {e.mensaje}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" onClick={() => setImportReport(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <details className="rounded-lg border bg-card px-4 py-3 text-sm">
         <summary className="cursor-pointer font-medium">Formato para importar Excel / CSV</summary>
         <p className="mt-2 text-muted-foreground">{DESCRIPCION_IMPORT_EQUIPOS}</p>
@@ -472,46 +524,13 @@ export function EquiposPage() {
         title="Equipos y Jugadores"
         description="Gestiona los equipos inscritos y sus jugadores por categoría"
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              type="button"
-              size="sm"
-              onClick={() => downloadCsv('plantilla-equipos.csv', PLANTILLA_EQUIPOS_CSV)}
-            >
-              Plantilla equipos
-            </Button>
-            <Button
-              variant="outline"
-              type="button"
-              size="sm"
-              onClick={() => downloadCsv('plantilla-jugadores.csv', PLANTILLA_JUGADORES_CSV)}
-            >
-              Plantilla jugadores
-            </Button>
-            <input
-              ref={equiposImportRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              className="hidden"
-              onChange={(e) => void handleEquiposExcelChange(e)}
-            />
-            <Button
-              variant="outline"
-              type="button"
-              disabled={!selectedCategoria || eqMutating}
-              onClick={() => equiposImportRef.current?.click()}
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Importar desde Excel
-            </Button>
-            <Dialog open={isTeamDialogOpen} onOpenChange={setIsTeamDialogOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={() => openTeamDialog()} disabled={!selectedCategoria || eqMutating}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Agregar Equipo
-                </Button>
-              </DialogTrigger>
+          <Dialog open={isTeamDialogOpen} onOpenChange={setIsTeamDialogOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={() => openTeamDialog()} disabled={!selectedCategoria || eqMutating}>
+                <Plus className="mr-2 h-4 w-4" />
+                Agregar Equipo
+              </Button>
+            </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>{editingEquipo ? 'Editar equipo' : 'Nuevo equipo'}</DialogTitle>
@@ -601,7 +620,11 @@ export function EquiposPage() {
                         if (!f) return
                         void (async () => {
                           try {
-                            const up = await uploadImage(f, 'equipos/logos')
+                            if (!torneoId) {
+                              toast.error('No hay torneo activo')
+                              return
+                            }
+                            const up = await uploadImage(f, { torneoId, type: 'equipo_logo' })
                             setTeamForm((prev) => ({
                               ...prev,
                               logoUrl: up.secure_url,
@@ -618,8 +641,16 @@ export function EquiposPage() {
                       <Button type="button" variant="outline" size="sm" onClick={() => teamLogoInputRef.current?.click()}>
                         Subir imagen
                       </Button>
-                      {teamForm.logoUrl ? (
-                        <img src={teamForm.logoUrl} alt="" className="h-12 w-12 rounded-md border object-cover" />
+                      {resolveDisplayImageUrl(teamForm.logoPublicId, teamForm.logoUrl, displayImagePresets.equipoLogo()) ? (
+                        <img
+                          src={resolveDisplayImageUrl(
+                            teamForm.logoPublicId,
+                            teamForm.logoUrl,
+                            displayImagePresets.equipoLogo(),
+                          )}
+                          alt=""
+                          className="h-12 w-12 rounded-md border object-cover"
+                        />
                       ) : null}
                     </div>
                   </div>
@@ -634,7 +665,6 @@ export function EquiposPage() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-          </div>
         }
       />
 
@@ -676,6 +706,29 @@ export function EquiposPage() {
               </div>
             </div>
           </div>
+          <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
+            <input
+              ref={equiposImportRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => void handleEquiposExcelChange(e)}
+            />
+            <Button variant="outline" type="button" size="sm" onClick={() => downloadPlantillaEquiposXlsx()}>
+              <Download className="mr-2 h-4 w-4" />
+              Descargar plantilla de equipos
+            </Button>
+            <Button
+              variant="outline"
+              type="button"
+              size="sm"
+              disabled={!selectedCategoria || eqMutating}
+              onClick={() => equiposImportRef.current?.click()}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Importar equipos
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -707,9 +760,13 @@ export function EquiposPage() {
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      {equipo.logoUrl ? (
+                      {resolveDisplayImageUrl(equipo.logoPublicId, equipo.logoUrl, displayImagePresets.equipoLogo()) ? (
                         <img
-                          src={equipo.logoUrl}
+                          src={resolveDisplayImageUrl(
+                            equipo.logoPublicId,
+                            equipo.logoUrl,
+                            displayImagePresets.equipoLogo(),
+                          )}
                           alt=""
                           className="h-12 w-12 rounded-lg border object-cover"
                         />
@@ -815,6 +872,7 @@ export function EquiposPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-14">Foto</TableHead>
                   <TableHead>Jugador</TableHead>
                   <TableHead>Equipo</TableHead>
                   <TableHead>Documento</TableHead>
@@ -823,8 +881,25 @@ export function EquiposPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {jugadoresCategoria.map((jugador) => (
+                {jugadoresCategoria.map((jugador) => {
+                  const fotoSrc = resolveDisplayImageUrl(jugador.fotoPublicId, jugador.fotoUrl, {
+                    width: 40,
+                    height: 40,
+                    crop: 'fill',
+                    quality: 'auto',
+                    format: 'auto',
+                  })
+                  return (
                   <TableRow key={jugador.id}>
+                    <TableCell>
+                      {fotoSrc ? (
+                        <img src={fotoSrc} alt="" className="h-9 w-9 rounded-md border object-cover" />
+                      ) : (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-muted">
+                          <User className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className="font-medium">{jugador.nombre}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -850,7 +925,8 @@ export function EquiposPage() {
                       )}
                     </TableCell>
                   </TableRow>
-                ))}
+                  )
+                })}
               </TableBody>
             </Table>
           )}
@@ -867,8 +943,20 @@ export function EquiposPage() {
         <SheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-xl">
           <SheetHeader>
             <div className="flex items-center gap-3">
-              {selectedEquipo?.logoUrl ? (
-                <img src={selectedEquipo.logoUrl} alt="" className="h-10 w-10 rounded-lg border object-cover" />
+              {resolveDisplayImageUrl(
+                selectedEquipo?.logoPublicId,
+                selectedEquipo?.logoUrl,
+                displayImagePresets.equipoLogo(),
+              ) ? (
+                <img
+                  src={resolveDisplayImageUrl(
+                    selectedEquipo?.logoPublicId,
+                    selectedEquipo?.logoUrl,
+                    displayImagePresets.equipoLogo(),
+                  )}
+                  alt=""
+                  className="h-10 w-10 rounded-lg border object-cover"
+                />
               ) : (
                 <div
                   className="flex h-10 w-10 items-center justify-center rounded-lg text-sm font-bold text-white"
@@ -894,9 +982,13 @@ export function EquiposPage() {
                   className="hidden"
                   onChange={(e) => void handleJugadoresExcelChange(e)}
                 />
+                <Button type="button" size="sm" variant="outline" onClick={() => downloadPlantillaJugadoresXlsx()}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Descargar plantilla de jugadores
+                </Button>
                 <Button type="button" size="sm" variant="outline" onClick={() => jugadoresImportRef.current?.click()} disabled={jugMutating}>
                   <Upload className="mr-2 h-4 w-4" />
-                  Importar Excel
+                  Importar jugadores
                 </Button>
                 <Button size="sm" onClick={() => setPlayerDialogOpen(true)} disabled={jugMutating}>
                   <UserPlus className="mr-2 h-4 w-4" />
@@ -962,7 +1054,11 @@ export function EquiposPage() {
                         if (!f) return
                         void (async () => {
                           try {
-                            const up = await uploadImage(f, 'jugadores/fotos')
+                            if (!torneoId) {
+                              toast.error('No hay torneo activo')
+                              return
+                            }
+                            const up = await uploadImage(f, { torneoId, type: 'jugador_foto' })
                             setPlayerForm((prev) => ({
                               ...prev,
                               fotoUrl: up.secure_url,
@@ -979,8 +1075,16 @@ export function EquiposPage() {
                       <Button type="button" variant="outline" size="sm" onClick={() => playerFotoInputRef.current?.click()}>
                         Subir foto
                       </Button>
-                      {playerForm.fotoUrl ? (
-                        <img src={playerForm.fotoUrl} alt="" className="h-14 w-14 rounded-md border object-cover" />
+                      {resolveDisplayImageUrl(playerForm.fotoPublicId, playerForm.fotoUrl, displayImagePresets.jugadorFoto()) ? (
+                        <img
+                          src={resolveDisplayImageUrl(
+                            playerForm.fotoPublicId,
+                            playerForm.fotoUrl,
+                            displayImagePresets.jugadorFoto(),
+                          )}
+                          alt=""
+                          className="h-14 w-14 rounded-md border object-cover"
+                        />
                       ) : null}
                     </div>
                   </div>
@@ -1041,6 +1145,7 @@ export function EquiposPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12">Foto</TableHead>
                     <TableHead>Nombre</TableHead>
                     <TableHead>Documento</TableHead>
                     <TableHead>Año Nac.</TableHead>
@@ -1049,8 +1154,25 @@ export function EquiposPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {jugadoresEquipo.map((jugador) => (
+                  {jugadoresEquipo.map((jugador) => {
+                    const fotoSrc = resolveDisplayImageUrl(jugador.fotoPublicId, jugador.fotoUrl, {
+                      width: 40,
+                      height: 40,
+                      crop: 'fill',
+                      quality: 'auto',
+                      format: 'auto',
+                    })
+                    return (
                     <TableRow key={jugador.id}>
+                      <TableCell>
+                        {fotoSrc ? (
+                          <img src={fotoSrc} alt="" className="h-8 w-8 rounded-md border object-cover" />
+                        ) : (
+                          <div className="flex h-8 w-8 items-center justify-center rounded-md border bg-muted">
+                            <User className="h-3.5 w-3.5 text-muted-foreground" />
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="font-medium">{jugador.nombre}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{jugador.documento}</TableCell>
                       <TableCell>{jugador.anioNacimiento}</TableCell>
@@ -1090,9 +1212,10 @@ export function EquiposPage() {
                         >
                           Eliminar
                         </Button>
-          </TableCell>
+                      </TableCell>
                     </TableRow>
-                  ))}
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>

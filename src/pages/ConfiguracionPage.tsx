@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/common/PageHeader'
@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useTorneoActivo, torneoActivoQueryKey } from '@/features/torneos/useTorneoActivo'
 import { invalidateTorneoQueries, torneosListQueryKey } from '@/features/torneos/TorneoProvider'
 import { deleteTorneo, getTorneos, updateTorneo } from '@/features/torneos/torneosService'
+import { displayImagePresets, resolveDisplayImageUrl, uploadImage } from '@/features/uploads/uploadService'
 import { useCategorias } from '@/features/categorias/useCategorias'
 import { translateUserError } from '@/lib/errorMessages'
 import { formatCurrency } from '@/lib/utils'
@@ -56,6 +57,7 @@ import {
 
 export function ConfiguracionPage() {
   const qc = useQueryClient()
+  const logoFileRef = useRef<HTMLInputElement>(null)
   const [darkMode, setDarkMode] = useState(false)
   const [canchaDialogOpen, setCanchaDialogOpen] = useState(false)
   const [horarioDialogOpen, setHorarioDialogOpen] = useState(false)
@@ -73,6 +75,7 @@ export function ConfiguracionPage() {
     fecha_inicio: '',
     fecha_fin: '',
     logo_url: '',
+    logo_public_id: '' as string | null,
   })
 
   useEffect(() => {
@@ -84,6 +87,7 @@ export function ConfiguracionPage() {
       fecha_inicio: torneo.fecha_inicio ?? '',
       fecha_fin: torneo.fecha_fin ?? '',
       logo_url: torneo.logo_url ?? '',
+      logo_public_id: torneo.logo_public_id ?? null,
     })
   }, [torneo])
 
@@ -97,6 +101,7 @@ export function ConfiguracionPage() {
         fecha_inicio: torneoForm.fecha_inicio || null,
         fecha_fin: torneoForm.fecha_fin || null,
         logo_url: torneoForm.logo_url.trim() || null,
+        logo_public_id: torneoForm.logo_public_id?.trim() || null,
       })
     },
     onSuccess: async () => {
@@ -345,13 +350,60 @@ export function ConfiguracionPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="logoUrl">URL del logo</Label>
+                    <Label htmlFor="logoUrl">URL del logo (opcional si subes archivo)</Label>
                     <Input
                       id="logoUrl"
                       value={torneoForm.logo_url}
-                      onChange={(e) => setTorneoForm((f) => ({ ...f, logo_url: e.target.value }))}
+                      onChange={(e) =>
+                        setTorneoForm((f) => ({
+                          ...f,
+                          logo_url: e.target.value,
+                          logo_public_id: null,
+                        }))
+                      }
                       placeholder="https://..."
                     />
+                    <input
+                      ref={logoFileRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        e.target.value = ''
+                        if (!file || !torneoId) return
+                        void (async () => {
+                          try {
+                            const up = await uploadImage(file, { torneoId, type: 'torneo_logo' })
+                            setTorneoForm((f) => ({
+                              ...f,
+                              logo_url: up.secure_url,
+                              logo_public_id: up.public_id,
+                            }))
+                            toast.success('Logo subido. Pulsa Guardar para persistir en el torneo.')
+                          } catch (err) {
+                            toast.error(err instanceof Error ? err.message : 'No se pudo subir el logo')
+                          }
+                        })()
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button type="button" variant="outline" size="sm" onClick={() => logoFileRef.current?.click()}>
+                        <Upload className="mr-2 h-4 w-4" />
+                        Subir logo (Cloudinary)
+                      </Button>
+                      {resolveDisplayImageUrl(torneoForm.logo_public_id, torneoForm.logo_url, displayImagePresets.torneoLogo()) ? (
+                        <img
+                          src={resolveDisplayImageUrl(
+                            torneoForm.logo_public_id,
+                            torneoForm.logo_url,
+                            displayImagePresets.torneoLogo(),
+                          )}
+                          alt=""
+                          className="h-14 w-14 rounded-full border object-cover"
+                        />
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="space-y-2">

@@ -52,6 +52,7 @@ function mapJugadorUi(row: JugadorRow, equipoId: string, categoriaId: string): J
     estado,
     advertencia,
     fotoUrl: row.foto_url ?? null,
+    fotoPublicId: row.foto_public_id ?? null,
   }
 }
 

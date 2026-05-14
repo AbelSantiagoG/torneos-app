@@ -91,6 +91,7 @@ export interface Jugador {
   estado: 'activo' | 'advertencia' | 'inactivo'
   advertencia?: string
   fotoUrl?: string | null
+  fotoPublicId?: string | null
 }
 
 export interface Partido {

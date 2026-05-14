@@ -60,9 +60,13 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
     return 'Falta completar un campo obligatorio.'
   }
 
+  if (text.includes('invalid input value for enum')) {
+    return 'El valor seleccionado no es válido para este campo.'
+  }
+
   if (code === '23514' || text.includes('check constraint')) {
     if (text.includes('edad') || text.includes('age')) {
-      return 'La edad del jugador no cumple las reglas de la categoría.'
+      return 'La edad del jugador no corresponde a la categoría seleccionada.'
     }
     return 'Los datos no cumplen una regla de validación. Revisa edades, montos o valores permitidos.'
   }
@@ -92,7 +96,7 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
   }
 
   if (text.includes('violates') || text.includes('constraint') || text.includes('null value')) {
-    return 'No se pudo guardar. Revisa que todos los datos sean válidos.'
+    return 'No se pudo guardar la información. Verifica los datos e intenta nuevamente.'
   }
 
   const fallback = String(e.message ?? error ?? '').trim()
@@ -106,7 +110,7 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
     return fallback.length > 180 ? `${fallback.slice(0, 177)}…` : fallback
   }
 
-  return 'No se pudo completar la operación. Intenta de nuevo o revisa los datos.'
+  return 'No se pudo guardar la información. Verifica los datos e intenta nuevamente.'
 }
 
 export function toFriendlyError(error: unknown, context?: UserErrorContext): Error {

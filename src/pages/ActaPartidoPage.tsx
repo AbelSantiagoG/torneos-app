@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Save, ArrowLeft } from 'lucide-react'
+import { Save, ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -17,35 +19,116 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatDate } from '@/lib/utils'
+import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
-import { usePartidosTorneo } from '@/features/partidos/usePartidosTorneo'
+import { useCategorias } from '@/features/categorias/useCategorias'
 import { getEquipoById } from '@/features/equipos/equiposService'
 import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
-import { useCategorias } from '@/features/categorias/useCategorias'
 import { supabase } from '@/lib/supabase'
-import { isJugadoEstado } from '@/features/partidos/partidosUi'
+import {
+  getOrCreateActa,
+  guardarActaCompleta,
+  listGolesPartido,
+  listPartidosParaActa,
+  listTarjetasPartido,
+} from '@/features/actas/actaPartidoService'
+import type { PartidoListaUi } from '@/features/partidos/partidosService'
+import { partidosTorneoQueryKey } from '@/features/partidos/usePartidosTorneo'
 
 interface ActaPartidoPageProps {
   onBack?: () => void
 }
 
+type GolForm = { tempId: string; jugador_id: string; equipo_id: string; minuto: string }
+type TarjForm = { tempId: string; jugador_id: string; tipo: 'amarilla' | 'roja' }
+
 export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
-  const [selectedPartido, setSelectedPartido] = useState('')
+  const qc = useQueryClient()
+  const [categoriaId, setCategoriaId] = useState('')
+  const [partidoId, setPartidoId] = useState('')
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
-  const { data: bundle, isLoading: parLoading, error: parError } = usePartidosTorneo(torneoId)
 
-  const partidosLista = useMemo(() => {
-    const programados = bundle?.programados ?? []
-    const fix = bundle?.fixture ?? []
-    const progIds = new Set(programados.map((p) => p.id))
-    return fix.filter((p) => progIds.has(p.id) || isJugadoEstado(p.estado))
-  }, [bundle])
+  const { data: categorias = [], isLoading: catLoading } = useCategorias(torneoId)
 
-  const { data: categorias = [] } = useCategorias(torneoId)
+  const partidosQ = useQuery({
+    queryKey: ['acta-partidos', torneoId, categoriaId],
+    enabled: Boolean(torneoId && categoriaId),
+    queryFn: () => listPartidosParaActa(torneoId!, categoriaId),
+  })
 
-  const partido = partidosLista.find((p) => p.id === selectedPartido)
+  const partidosLista = partidosQ.data ?? []
+  const partido = partidosLista.find((p) => p.id === partidoId)
+
+  const actaQ = useQuery({
+    queryKey: ['acta', partidoId],
+    enabled: Boolean(partidoId),
+    queryFn: () => getOrCreateActa(partidoId),
+  })
+
+  const golesInitQ = useQuery({
+    queryKey: ['acta-goles', partidoId],
+    enabled: Boolean(partidoId),
+    queryFn: () => listGolesPartido(partidoId),
+  })
+
+  const tarjetasInitQ = useQuery({
+    queryKey: ['acta-tarjetas', partidoId],
+    enabled: Boolean(partidoId),
+    queryFn: () => listTarjetasPartido(partidoId),
+  })
+
+  const [arbitroId, setArbitroId] = useState<string>('')
+  const [observaciones, setObservaciones] = useState('')
+  const [golesForm, setGolesForm] = useState<GolForm[]>([])
+  const [tarjetasForm, setTarjetasForm] = useState<TarjForm[]>([])
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (categorias.length && !categoriaId) {
+      setCategoriaId(categorias[0]!.id)
+    }
+  }, [categorias, categoriaId])
+
+  useEffect(() => {
+    if (partidosLista.length && !partidoId) {
+      setPartidoId(partidosLista[0]!.id)
+      return
+    }
+    if (partidoId && partidosLista.length && !partidosLista.some((p) => p.id === partidoId)) {
+      setPartidoId(partidosLista[0]?.id ?? '')
+    }
+  }, [partidosLista, partidoId])
+
+  useEffect(() => {
+    if (!actaQ.data) return
+    setArbitroId(actaQ.data.arbitro_id ?? '')
+    setObservaciones(actaQ.data.observaciones ?? '')
+  }, [partidoId, actaQ.data])
+
+  useEffect(() => {
+    if (!golesInitQ.data) return
+    setGolesForm(
+      golesInitQ.data.map((g) => ({
+        tempId: g.id ?? crypto.randomUUID(),
+        jugador_id: g.jugador_id,
+        equipo_id: g.equipo_id,
+        minuto: g.minuto != null ? String(g.minuto) : '',
+      })),
+    )
+  }, [golesInitQ.data])
+
+  useEffect(() => {
+    if (!tarjetasInitQ.data) return
+    setTarjetasForm(
+      tarjetasInitQ.data.map((t) => ({
+        tempId: t.id ?? crypto.randomUUID(),
+        jugador_id: t.jugador_id,
+        tipo: t.tipo === 'roja' ? 'roja' : 'amarilla',
+      })),
+    )
+  }, [tarjetasInitQ.data])
 
   const equiposQ = useQuery({
     queryKey: ['acta-equipos', partido?.equipoLocalId, partido?.equipoVisitanteId],
@@ -85,14 +168,6 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
     },
   })
 
-  useEffect(() => {
-    if (parError) toast.error(parError instanceof Error ? parError.message : 'Error al cargar partidos')
-  }, [parError])
-
-  useEffect(() => {
-    if (partidosLista.length && !selectedPartido) setSelectedPartido(partidosLista[0]!.id)
-  }, [partidosLista, selectedPartido])
-
   const localRow = equiposQ.data?.local
   const visitRow = equiposQ.data?.visitante
   const categoria = categorias.find((c) => c.id === partido?.categoriaId)
@@ -103,6 +178,91 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
   const visitNombre = visitRow?.nombre ?? partido?.equipoVisitanteNombre ?? 'Visitante'
   const localPh = (localRow?.sigla ?? localNombre).toString().slice(0, 2).toUpperCase()
   const visitPh = (visitRow?.sigla ?? visitNombre).toString().slice(0, 2).toUpperCase()
+
+  const marcador = useMemo(() => {
+    const el = partido?.equipoLocalId
+    const ev = partido?.equipoVisitanteId
+    if (!el || !ev) return { local: 0, vis: 0 }
+    let local = 0
+    let vis = 0
+    for (const g of golesForm) {
+      if (g.equipo_id === el) local++
+      else if (g.equipo_id === ev) vis++
+    }
+    return { local, vis }
+  }, [golesForm, partido?.equipoLocalId, partido?.equipoVisitanteId])
+
+  const jugadoresOpciones = useMemo(() => {
+    const jl = jugLocalQ.data ?? []
+    const jv = jugVisQ.data ?? []
+    return [
+      ...jl.map((j) => ({ id: j.id, label: `${j.nombre} (local)`, equipoId: partido?.equipoLocalId! })),
+      ...jv.map((j) => ({ id: j.id, label: `${j.nombre} (visitante)`, equipoId: partido?.equipoVisitanteId! })),
+    ]
+  }, [jugLocalQ.data, jugVisQ.data, partido?.equipoLocalId, partido?.equipoVisitanteId])
+
+  const invalidatePartidos = () => {
+    if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
+  }
+
+  const guardar = async () => {
+    if (!partido || !actaQ.data) return
+    const el = partido.equipoLocalId
+    const ev = partido.equipoVisitanteId
+    if (!el || !ev) return
+
+    setSaving(true)
+    try {
+      const golesPayload = golesForm
+        .filter((g) => g.jugador_id && g.equipo_id)
+        .map((g) => ({
+          jugador_id: g.jugador_id,
+          equipo_id: g.equipo_id,
+          minuto: g.minuto.trim() ? Number(g.minuto) : null,
+        }))
+
+      const tarPayload = tarjetasForm
+        .filter((t) => t.jugador_id)
+        .map((t) => ({
+          jugador_id: t.jugador_id,
+          tipo: t.tipo,
+        }))
+
+      await guardarActaCompleta({
+        actaId: actaQ.data.id,
+        partidoId: partido.id,
+        equipoLocalId: el,
+        equipoVisitanteId: ev,
+        arbitro_id: arbitroId || null,
+        observaciones: observaciones.trim() || null,
+        goles: golesPayload,
+        tarjetas: tarPayload,
+        tieneProgramacion: Boolean(partido.programacionId),
+      })
+      toast.success('Acta guardada')
+      void actaQ.refetch()
+      void golesInitQ.refetch()
+      void tarjetasInitQ.refetch()
+      invalidatePartidos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'programacion'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const addGol = () => {
+    const el = partido?.equipoLocalId
+    if (!el) return
+    setGolesForm((prev) => [
+      ...prev,
+      { tempId: crypto.randomUUID(), jugador_id: '', equipo_id: el, minuto: '' },
+    ])
+  }
+
+  const addTarjeta = () => {
+    setTarjetasForm((prev) => [...prev, { tempId: crypto.randomUUID(), jugador_id: '', tipo: 'amarilla' }])
+  }
 
   if (torneoLoading) {
     return (
@@ -126,7 +286,7 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
     <div className="space-y-6">
       <PageHeader
         title="Acta de Partido"
-        description="Selecciona un partido real del fixture. El guardado en goles/tarjetas se conectará después."
+        description="Selecciona categoría y un partido programado o jugado. El marcador se calcula con los goles registrados."
         actions={
           <div className="flex gap-2">
             {onBack && (
@@ -135,41 +295,61 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                 Volver
               </Button>
             )}
-            <Button type="button" variant="secondary" disabled>
+            <Button type="button" onClick={() => void guardar()} disabled={saving || !partido}>
               <Save className="mr-2 h-4 w-4" />
-              Guardar Acta
+              {saving ? 'Guardando…' : 'Guardar acta'}
             </Button>
           </div>
         }
       />
 
       <Card>
-        <CardContent className="pt-6">
-          <Label className="mb-2 block text-xs text-muted-foreground">Seleccionar Partido</Label>
-          {parLoading ? (
-            <Skeleton className="h-10 w-96" />
-          ) : partidosLista.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No hay partidos programados o jugados en Supabase.</p>
-          ) : (
-            <Select value={selectedPartido} onValueChange={setSelectedPartido}>
-              <SelectTrigger className="w-full md:w-96">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {partidosLista.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    <span className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-[10px]">
-                        {p.categoriaNombre}
-                      </Badge>
-                      {p.equipoLocalNombre} vs {p.equipoVisitanteNombre}
-                      {p.fecha ? ` — ${formatDate(p.fecha)}` : ''}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+        <CardContent className="space-y-4 pt-6">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Categoría</Label>
+              {catLoading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : categorias.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay categorías.</p>
+              ) : (
+                <Select value={categoriaId} onValueChange={setCategoriaId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Categoría" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categorias.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Partido</Label>
+              {partidosQ.isLoading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : partidosLista.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay partidos programados en esta categoría.</p>
+              ) : (
+                <Select value={partidoId} onValueChange={setPartidoId}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {partidosLista.map((p: PartidoListaUi) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.equipoLocalNombre} vs {p.equipoVisitanteNombre}
+                        {p.fecha ? ` — ${formatDate(p.fecha)}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -177,11 +357,11 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
         <>
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <CardTitle>Información del Partido</CardTitle>
+                  <CardTitle>Información del partido</CardTitle>
                   <CardDescription>
-                    {partido.fecha ? formatDate(partido.fecha) : 'Sin fecha'} — {partido.hora || '—'} —{' '}
+                    {partido.fecha ? formatDate(partido.fecha) : 'Fecha por definir'} — {partido.hora || '—'} —{' '}
                     {partido.cancha || '—'}
                   </CardDescription>
                 </div>
@@ -206,9 +386,9 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                     <p className="text-xs text-muted-foreground">Local</p>
                   </div>
                   <div className="flex items-center gap-4">
-                    <p className="text-5xl font-bold">{partido.golesLocal ?? '—'}</p>
+                    <p className="text-5xl font-bold">{marcador.local}</p>
                     <span className="text-2xl text-muted-foreground">-</span>
-                    <p className="text-5xl font-bold">{partido.golesVisitante ?? '—'}</p>
+                    <p className="text-5xl font-bold">{marcador.vis}</p>
                   </div>
                   <div className="text-center">
                     <div
@@ -227,44 +407,160 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Jugadores locales</CardTitle>
-                <CardDescription>Membresía activa (jugador_equipos)</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base">Goles</CardTitle>
+                <Button type="button" size="sm" variant="outline" onClick={addGol}>
+                  <Plus className="mr-1 h-4 w-4" />
+                  Gol
+                </Button>
               </CardHeader>
-              <CardContent>
-                {jugLocalQ.isLoading ? (
-                  <Skeleton className="h-24 w-full" />
-                ) : (jugLocalQ.data?.length ?? 0) === 0 ? (
-                  <p className="text-sm text-muted-foreground">Sin jugadores activos en el equipo local.</p>
+              <CardContent className="space-y-3">
+                {golesForm.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin goles registrados.</p>
                 ) : (
-                  <ul className="space-y-1 text-sm">
-                    {jugLocalQ.data!.map((j) => (
-                      <li key={j.id}>
-                        {j.nombre} — {j.documento}
-                      </li>
-                    ))}
-                  </ul>
+                  golesForm.map((g) => (
+                    <div key={g.tempId} className="flex flex-wrap items-end gap-2 rounded-md border p-3">
+                      <div className="min-w-[140px] flex-1 space-y-1">
+                        <Label className="text-xs">Jugador</Label>
+                        <Select
+                          value={g.jugador_id}
+                          onValueChange={(v) => {
+                            const meta = jugadoresOpciones.find((j) => j.id === v)
+                            setGolesForm((prev) =>
+                              prev.map((row) =>
+                                row.tempId === g.tempId
+                                  ? { ...row, jugador_id: v, equipo_id: meta?.equipoId ?? row.equipo_id }
+                                  : row,
+                              ),
+                            )
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Seleccionar" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {jugadoresOpciones.map((j) => (
+                              <SelectItem key={`${g.tempId}-${j.id}`} value={j.id}>
+                                {j.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="w-28 space-y-1">
+                        <Label className="text-xs">Equipo anotador</Label>
+                        <Select
+                          value={g.equipo_id}
+                          onValueChange={(v) =>
+                            setGolesForm((prev) =>
+                              prev.map((row) => (row.tempId === g.tempId ? { ...row, equipo_id: v } : row)),
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={partido.equipoLocalId!}>Local</SelectItem>
+                            <SelectItem value={partido.equipoVisitanteId!}>Visitante</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="w-20 space-y-1">
+                        <Label className="text-xs">Minuto</Label>
+                        <Input
+                          inputMode="numeric"
+                          value={g.minuto}
+                          onChange={(e) =>
+                            setGolesForm((prev) =>
+                              prev.map((row) => (row.tempId === g.tempId ? { ...row, minuto: e.target.value } : row)),
+                            )
+                          }
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive"
+                        onClick={() => setGolesForm((prev) => prev.filter((row) => row.tempId !== g.tempId))}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))
                 )}
               </CardContent>
             </Card>
+
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Jugadores visitantes</CardTitle>
-                <CardDescription>Membresía activa (jugador_equipos)</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base">Tarjetas</CardTitle>
+                <Button type="button" size="sm" variant="outline" onClick={addTarjeta}>
+                  <Plus className="mr-1 h-4 w-4" />
+                  Tarjeta
+                </Button>
               </CardHeader>
-              <CardContent>
-                {jugVisQ.isLoading ? (
-                  <Skeleton className="h-24 w-full" />
-                ) : (jugVisQ.data?.length ?? 0) === 0 ? (
-                  <p className="text-sm text-muted-foreground">Sin jugadores activos en el equipo visitante.</p>
+              <CardContent className="space-y-3">
+                {tarjetasForm.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin tarjetas.</p>
                 ) : (
-                  <ul className="space-y-1 text-sm">
-                    {jugVisQ.data!.map((j) => (
-                      <li key={j.id}>
-                        {j.nombre} — {j.documento}
-                      </li>
-                    ))}
-                  </ul>
+                  tarjetasForm.map((t) => (
+                    <div key={t.tempId} className="flex flex-wrap items-end gap-2 rounded-md border p-3">
+                      <div className="min-w-[160px] flex-1 space-y-1">
+                        <Label className="text-xs">Jugador</Label>
+                        <Select
+                          value={t.jugador_id}
+                          onValueChange={(v) =>
+                            setTarjetasForm((prev) =>
+                              prev.map((row) => (row.tempId === t.tempId ? { ...row, jugador_id: v } : row)),
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Seleccionar" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {jugadoresOpciones.map((j) => (
+                              <SelectItem key={`${t.tempId}-${j.id}`} value={j.id}>
+                                {j.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="w-36 space-y-1">
+                        <Label className="text-xs">Tipo</Label>
+                        <Select
+                          value={t.tipo}
+                          onValueChange={(v) =>
+                            setTarjetasForm((prev) =>
+                              prev.map((row) =>
+                                row.tempId === t.tempId ? { ...row, tipo: v as 'amarilla' | 'roja' } : row,
+                              ),
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="amarilla">Amarilla</SelectItem>
+                            <SelectItem value="roja">Roja</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive"
+                        onClick={() => setTarjetasForm((prev) => prev.filter((row) => row.tempId !== t.tempId))}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))
                 )}
               </CardContent>
             </Card>
@@ -272,27 +568,35 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Árbitro (catálogo Supabase)</CardTitle>
+              <CardTitle className="text-base">Árbitro y observaciones</CardTitle>
             </CardHeader>
-            <CardContent className="max-w-md">
-              {arbitrosQ.isLoading ? (
-                <Skeleton className="h-10 w-full" />
-              ) : (arbitrosQ.data?.length ?? 0) === 0 ? (
-                <p className="text-sm text-muted-foreground">No hay árbitros en la tabla arbitros (o sin permisos de lectura).</p>
-              ) : (
-                <Select disabled>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar árbitro (pendiente guardado)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {arbitrosQ.data!.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Árbitro</Label>
+                {arbitrosQ.isLoading ? (
+                  <Skeleton className="h-10 w-full" />
+                ) : (arbitrosQ.data?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">No hay árbitros en el catálogo.</p>
+                ) : (
+                  <Select value={arbitroId || '__none__'} onValueChange={(v) => setArbitroId(v === '__none__' ? '' : v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar árbitro" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Sin asignar</SelectItem>
+                      {arbitrosQ.data!.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Observaciones</Label>
+                <Textarea value={observaciones} onChange={(e) => setObservaciones(e.target.value)} rows={3} />
+              </div>
             </CardContent>
           </Card>
         </>

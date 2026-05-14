@@ -1,6 +1,6 @@
 import { createEquipo, existeEquipoNombreEnCategoria } from '@/features/equipos/equiposService'
 import { pickCell } from '@/features/excel/parseSheet'
-import { toUserError } from '@/lib/supabaseErrors'
+import { translateUserError } from '@/lib/errorMessages'
 
 export type ImportEquiposResult = {
   creados: number
@@ -8,11 +8,16 @@ export type ImportEquiposResult = {
   errores: { fila: number; mensaje: string }[]
 }
 
-function normalizeColor(raw: string): string {
+const DEFAULT_EQUIPO_COLOR = '#64748b'
+
+function resolveColor(raw: string): { ok: true; hex: string } | { ok: false; mensaje: string } {
   const t = raw.trim()
-  if (!t) return ''
-  if (t.startsWith('#')) return t.length >= 4 ? t : ''
-  return `#${t.replace(/^#/, '')}`
+  if (!t) return { ok: true, hex: DEFAULT_EQUIPO_COLOR }
+  const hex = t.startsWith('#') ? t : `#${t.replace(/^#/, '')}`
+  if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+    return { ok: false, mensaje: 'El color debe ser hexadecimal de 6 dígitos, ejemplo #22c55e.' }
+  }
+  return { ok: true, hex }
 }
 
 export async function importEquiposFromRows(
@@ -29,7 +34,7 @@ export async function importEquiposFromRows(
     const fila = i + 2
     const nombre = pickCell(row, 'nombre', 'name', 'equipo', 'nombre_equipo')
     const sigla = pickCell(row, 'sigla', 'abbr', 'iniciales')
-    let color = normalizeColor(pickCell(row, 'color', 'colour'))
+    const colorRaw = pickCell(row, 'color', 'colour')
     const observaciones = pickCell(row, 'observaciones', 'notas', 'notes', 'comentarios')
     const logoUrl = pickCell(row, 'logo_url', 'logo', 'url_logo', 'imagen')
 
@@ -41,8 +46,9 @@ export async function importEquiposFromRows(
       errores.push({ fila, mensaje: 'Falta la sigla.' })
       continue
     }
-    if (!color) {
-      errores.push({ fila, mensaje: 'Falta el color (ej: #dc2626).' })
+    const colorRes = resolveColor(colorRaw)
+    if (!colorRes.ok) {
+      errores.push({ fila, mensaje: colorRes.mensaje })
       continue
     }
 
@@ -62,14 +68,14 @@ export async function importEquiposFromRows(
       await createEquipo(opts.torneoId, opts.categoriaId, {
         nombre,
         sigla,
-        color,
+        color: colorRes.hex,
         observaciones: observaciones || null,
         logo_url: logoUrl?.trim() || null,
         logo_public_id: null,
       })
       creados++
     } catch (e) {
-      errores.push({ fila, mensaje: toUserError(e, 'equipo').message })
+      errores.push({ fila, mensaje: translateUserError(e, 'equipo') })
     }
   }
 

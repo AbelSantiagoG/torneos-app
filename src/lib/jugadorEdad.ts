@@ -11,10 +11,10 @@ export function validarEdadCategoria(
 ): string | null {
   const edad = edadDesdeAnioNacimiento(anioNacimiento, referenciaAnio)
   if (edadMax != null && edad > edadMax) {
-    return `La edad del jugador (${edad} años) supera el máximo permitido en esta categoría (${edadMax}).`
+    return 'La edad del jugador no corresponde a la categoría seleccionada.'
   }
   if (edadMin != null && edad < edadMin) {
-    return `La edad del jugador (${edad} años) es menor al mínimo de la categoría (${edadMin}).`
+    return 'La edad del jugador no corresponde a la categoría seleccionada.'
   }
   return null
 }

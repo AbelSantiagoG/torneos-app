@@ -15,11 +15,15 @@ export type PartidoDashboardUi = {
   equipoVisitanteNombre: string
   equipoLocalLogoUrl?: string | null
   equipoVisitanteLogoUrl?: string | null
+  equipoLocalLogoPublicId?: string | null
+  equipoVisitanteLogoPublicId?: string | null
   golesLocal: number | null
   golesVisitante: number | null
   equipoLocalId?: string | null
   equipoVisitanteId?: string | null
   programacionId?: string | null
+  /** Orden dentro de la jornada (fixture). */
+  orden?: number
 }
 
 export function mapVwPartidoRow(row: Record<string, unknown>): PartidoDashboardUi {

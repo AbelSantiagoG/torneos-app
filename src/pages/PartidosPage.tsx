@@ -3,8 +3,6 @@ import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Calendar,
-  Clock,
-  MapPin,
   AlertTriangle,
   Shuffle,
   Edit,
@@ -56,13 +54,16 @@ import {
   updatePartido,
   createPartidoManual,
   upsertProgramacion,
-  sorteoProgramacionesTorneoCategoria,
+  generarBorradorSorteo,
 } from '@/features/partidos/partidosService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
-import { isJugadoEstado, isProgramadoEstado } from '@/features/partidos/partidosUi'
+import { isJugadoEstado } from '@/features/partidos/partidosUi'
 import { countEquiposEnCategoria } from '@/features/equipos/equiposService'
 import { useEquipos } from '@/features/equipos/useEquipos'
 import { useCanchas } from '@/features/canchas/useCanchas'
+import { useHorarios } from '@/features/horarios/useHorarios'
+import { formatHoraUi, normalizeHoraDb } from '@/features/horarios/horariosService'
+import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/uploadService'
 
 interface PartidosPageProps {
   onOpenActa?: () => void
@@ -96,13 +97,16 @@ function TeamAvatar({
   nombre,
   color,
   logoUrl,
+  logoPublicId,
 }: {
   nombre: string
   color: string
   logoUrl?: string | null
+  logoPublicId?: string | null
 }) {
-  if (logoUrl) {
-    return <img src={logoUrl} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+  const src = resolveDisplayImageUrl(logoPublicId, logoUrl, displayImagePresets.equipoLogoThumb())
+  if (src) {
+    return <img src={src} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
   }
   return (
     <div
@@ -119,14 +123,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [selectedCategoria, setSelectedCategoria] = useState('')
   const [activeTab, setActiveTab] = useState('categoria')
   const [fixtureOpen, setFixtureOpen] = useState(false)
-  const [fechaBaseFixture, setFechaBaseFixture] = useState(() => new Date().toISOString().slice(0, 10))
   const [generandoFixture, setGenerandoFixture] = useState(false)
+  const [sorteoCategoria, setSorteoCategoria] = useState('')
   const [sorteoFecha, setSorteoFecha] = useState(() => new Date().toISOString().slice(0, 10))
   const [sorteoDias, setSorteoDias] = useState('14')
+  const [sorteoDrafts, setSorteoDrafts] = useState<Record<string, { fecha: string; canchaId: string; hora: string }>>({})
+  const [guardandoSorteo, setGuardandoSorteo] = useState(false)
 
   const [editPartido, setEditPartido] = useState<PartidoListaUi | null>(null)
   const [editJornada, setEditJornada] = useState('')
-  const [editFechaFixture, setEditFechaFixture] = useState('')
+  const [editOrden, setEditOrden] = useState('')
   const [editLocal, setEditLocal] = useState('')
   const [editVisit, setEditVisit] = useState('')
 
@@ -134,7 +140,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [nuevoLocal, setNuevoLocal] = useState('')
   const [nuevoVisit, setNuevoVisit] = useState('')
   const [nuevoJornada, setNuevoJornada] = useState('1')
-  const [nuevoFecha, setNuevoFecha] = useState('')
+  const [nuevoOrden, setNuevoOrden] = useState('0')
 
   const [progPartido, setProgPartido] = useState<PartidoListaUi | null>(null)
   const [progFecha, setProgFecha] = useState('')
@@ -153,6 +159,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const { data: equiposCat = [] } = useEquipos(selectedCategoria || undefined, torneoId)
   const { data: canchas = [] } = useCanchas(torneoId)
+  const { data: horariosLista = [] } = useHorarios(torneoId)
 
   useEffect(() => {
     if (parError) toast.error(translateUserError(parError, 'fixture'))
@@ -164,14 +171,34 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
   }, [categorias, selectedCategoria])
 
+  useEffect(() => {
+    if (categorias.length && !sorteoCategoria) {
+      setSorteoCategoria(categorias[0]!.id)
+    }
+  }, [categorias, sorteoCategoria])
+
+  useEffect(() => {
+    setSorteoDrafts({})
+  }, [sorteoCategoria])
+
   const categoriaActiva = useMemo(
     () => categorias.find((c) => c.id === selectedCategoria),
     [categorias, selectedCategoria],
   )
 
   const partidosCategoria = useMemo(
-    () => (selectedCategoria ? fixture.filter((p) => p.categoriaId === selectedCategoria) : fixture),
+    () => (selectedCategoria ? fixture.filter((p) => p.categoriaId === selectedCategoria) : []),
     [fixture, selectedCategoria],
+  )
+
+  const partidosSorteo = useMemo(
+    () => (sorteoCategoria ? fixture.filter((p) => p.categoriaId === sorteoCategoria) : []),
+    [fixture, sorteoCategoria],
+  )
+
+  const pendientesSorteo = useMemo(
+    () => partidosSorteo.filter((p) => !programmedIds.has(p.id)),
+    [partidosSorteo, programmedIds],
   )
 
   const jornadas = useMemo(
@@ -181,11 +208,6 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const partidosPorFecha = useMemo(() => groupByFecha(programados), [programados])
   const fechasOrdenadas = useMemo(() => Object.keys(partidosPorFecha).sort(), [partidosPorFecha])
-
-  const pendientesProgramar = useMemo(
-    () => partidosCategoria.filter((p) => !programmedIds.has(p.id)),
-    [partidosCategoria, programmedIds],
-  )
 
   const invalidatePartidos = () => {
     if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
@@ -212,7 +234,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.error('Esta categoría ya tiene partidos en el fixture.')
         return
       }
-      await generarFixtureCategoria(selectedCategoria, fechaBaseFixture)
+      await generarFixtureCategoria(selectedCategoria, new Date().toISOString().slice(0, 10))
       toast.success('Fixture generado.')
       setFixtureOpen(false)
       invalidatePartidos()
@@ -226,7 +248,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const openEdit = (p: PartidoListaUi) => {
     setEditPartido(p)
     setEditJornada(String(p.jornada ?? ''))
-    setEditFechaFixture(p.fecha?.slice(0, 10) ?? '')
+    setEditOrden(String(p.orden ?? 0))
     setEditLocal(p.equipoLocalId ?? '')
     setEditVisit(p.equipoVisitanteId ?? '')
   }
@@ -236,7 +258,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     try {
       await updatePartido(editPartido.id, {
         jornada: Number(editJornada) || 0,
-        fecha_fixture: editFechaFixture || null,
+        orden: Number(editOrden) || 0,
         equipo_local_id: editLocal,
         equipo_visitante_id: editVisit,
       })
@@ -272,34 +294,91 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         equipo_local_id: nuevoLocal,
         equipo_visitante_id: nuevoVisit,
         jornada: Number(nuevoJornada) || 1,
-        fecha_fixture: nuevoFecha || null,
+        orden: (() => {
+          const n = Number(nuevoOrden)
+          return n > 0 ? n : undefined
+        })(),
       })
       toast.success('Partido creado')
       setCreateOpen(false)
       setNuevoLocal('')
       setNuevoVisit('')
+      setNuevoJornada('1')
+      setNuevoOrden('0')
       invalidatePartidos()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
     }
   }
 
-  const ejecutarSorteo = async () => {
-    if (!torneoId || !selectedCategoria) return
+  const llenarBorradorSorteo = () => {
+    if (!torneoId || !sorteoCategoria) return
     const dias = Number(sorteoDias)
     if (Number.isNaN(dias) || dias < 1) {
       toast.error('Indica un número de días válido (1 o más).')
       return
     }
+    const canchasActivas = canchas.filter((c) => c.activa !== false)
+    if (!canchasActivas.length || !horariosLista.length) {
+      toast.error('Configura canchas activas y horarios en Configuración.')
+      return
+    }
+    if (!pendientesSorteo.length) {
+      toast.message('No hay partidos pendientes de programar en esta categoría.')
+      return
+    }
     try {
-      const { creadas } = await sorteoProgramacionesTorneoCategoria(torneoId, selectedCategoria, {
+      const borrador = generarBorradorSorteo({
+        pendientes: pendientesSorteo,
+        programados,
+        canchas: canchasActivas.map((c) => ({ id: c.id })),
+        horarios: horariosLista.map((h) => ({ hora: h.hora })),
         fechaInicio: sorteoFecha,
         dias,
       })
-      toast.success(creadas ? `Se programaron ${creadas} partidos.` : 'No había partidos pendientes de programar.')
+      setSorteoDrafts(borrador)
+      toast.success('Propuesta generada. Revisa y guarda cuando esté listo.')
+    } catch (e) {
+      toast.error(translateUserError(e, 'programacion'))
+    }
+  }
+
+  const guardarBorradorSorteo = async () => {
+    if (!torneoId || !sorteoCategoria) return
+    setGuardandoSorteo(true)
+    let guardados = 0
+    try {
+      const horasActivas = horariosLista.filter((h) => h.activo !== false)
+      const canchasActivas = canchas.filter((c) => c.activa !== false)
+      const defaultHora = horasActivas[0] ? formatHoraUi(normalizeHoraDb(horasActivas[0]!.hora)) : ''
+
+      for (const p of pendientesSorteo) {
+        const d = sorteoDrafts[p.id]
+        const eff = {
+          fecha: d?.fecha ?? sorteoFecha,
+          canchaId: d?.canchaId ?? canchasActivas[0]?.id ?? '',
+          hora: d?.hora ?? defaultHora,
+        }
+        if (!eff.canchaId || !eff.fecha || !eff.hora) continue
+        await upsertProgramacion(p.programacionId ?? null, {
+          partido_id: p.id,
+          cancha_id: eff.canchaId,
+          fecha: eff.fecha,
+          hora_inicio: eff.hora,
+        })
+        guardados++
+      }
+      if (!guardados) {
+        toast.error('Completa al menos un partido con fecha, cancha y hora antes de guardar.')
+        return
+      }
+      toast.success(`Se guardaron ${guardados} programación${guardados === 1 ? '' : 'es'}.`)
+      setSorteoDrafts({})
       invalidatePartidos()
     } catch (e) {
       toast.error(translateUserError(e, 'programacion'))
+    } finally {
+      setGuardandoSorteo(false)
     }
   }
 
@@ -357,19 +436,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           <DialogHeader>
             <DialogTitle>Generar fixture (todos contra todos)</DialogTitle>
             <DialogDescription>
-              Solo define enfrentamientos y fecha base por jornada. Cancha y hora se asignan después en Sorteo de
-              horarios.
+              Se crearán las jornadas y los enfrentamientos en la categoría seleccionada. La fecha y hora de juego se
+              asignan después en Sorteo de horarios.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label htmlFor="fixture-fecha">Fecha inicio (referencia)</Label>
-            <Input
-              id="fixture-fecha"
-              type="date"
-              value={fechaBaseFixture}
-              onChange={(e) => setFechaBaseFixture(e.target.value)}
-            />
-          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setFixtureOpen(false)}>
               Cancelar
@@ -385,7 +455,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Editar partido</DialogTitle>
-            <DialogDescription>Cambia jornada, fecha base del fixture o equipos.</DialogDescription>
+            <DialogDescription>Cambia jornada, orden de partido o equipos.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="space-y-1">
@@ -393,8 +463,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <Input value={editJornada} onChange={(e) => setEditJornada(e.target.value)} type="number" />
             </div>
             <div className="space-y-1">
-              <Label>Fecha base (fixture)</Label>
-              <Input type="date" value={editFechaFixture} onChange={(e) => setEditFechaFixture(e.target.value)} />
+              <Label>Orden en la jornada</Label>
+              <Input value={editOrden} onChange={(e) => setEditOrden(e.target.value)} type="number" />
             </div>
             <div className="space-y-1">
               <Label>Local</Label>
@@ -478,8 +548,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <Input value={nuevoJornada} onChange={(e) => setNuevoJornada(e.target.value)} type="number" />
             </div>
             <div className="space-y-1">
-              <Label>Fecha base (opcional)</Label>
-              <Input type="date" value={nuevoFecha} onChange={(e) => setNuevoFecha(e.target.value)} />
+              <Label>Orden (opcional, 0 = automático)</Label>
+              <Input value={nuevoOrden} onChange={(e) => setNuevoOrden(e.target.value)} type="number" />
             </div>
           </div>
           <DialogFooter>
@@ -616,30 +686,13 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <CardContent>
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                       {partidosJornada.map((partido) => {
-                        const played = isJugadoEstado(partido.estado)
                         const colLocal = partido.categoriaColor || '#64748b'
                         const colVis = '#64748b'
 
                         return (
                           <Card key={partido.id} className="overflow-hidden">
                             <div className="p-4">
-                              <div className="mb-3 flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <Calendar className="h-3 w-3" />
-                                  {partido.fecha ? formatDate(partido.fecha) : 'Sin fecha base'}
-                                </div>
-                                <Badge
-                                  variant={
-                                    played ? 'default' : isProgramadoEstado(partido.estado) ? 'secondary' : 'outline'
-                                  }
-                                >
-                                  {played
-                                    ? 'Jugado'
-                                    : isProgramadoEstado(partido.estado)
-                                      ? 'Programado'
-                                      : 'Pendiente de programar'}
-                                </Badge>
-                              </div>
+                              <p className="mb-3 text-xs text-muted-foreground">Orden {partido.orden ?? 0}</p>
 
                               <div className="mb-3 flex items-center justify-between gap-2">
                                 <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -647,19 +700,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                     nombre={partido.equipoLocalNombre}
                                     color={colLocal}
                                     logoUrl={partido.equipoLocalLogoUrl}
+                                    logoPublicId={partido.equipoLocalLogoPublicId}
                                   />
                                   <span className="truncate text-sm font-medium">{partido.equipoLocalNombre}</span>
                                 </div>
 
-                                {played ? (
-                                  <div className="mx-1 flex min-w-[50px] items-center justify-center rounded bg-secondary px-2 py-1 text-secondary-foreground">
-                                    <span className="font-bold">{partido.golesLocal ?? '—'}</span>
-                                    <span className="mx-1">-</span>
-                                    <span className="font-bold">{partido.golesVisitante ?? '—'}</span>
-                                  </div>
-                                ) : (
-                                  <span className="mx-1 shrink-0 text-muted-foreground">vs</span>
-                                )}
+                                <span className="mx-1 shrink-0 text-muted-foreground">vs</span>
 
                                 <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
                                   <span className="truncate text-sm font-medium">{partido.equipoVisitanteNombre}</span>
@@ -667,13 +713,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                     nombre={partido.equipoVisitanteNombre}
                                     color={colVis}
                                     logoUrl={partido.equipoVisitanteLogoUrl}
+                                    logoPublicId={partido.equipoVisitanteLogoPublicId}
                                   />
                                 </div>
                               </div>
 
                               <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
                                 <span>
-                                  Hora y cancha se definen en <strong>Sorteo de horarios</strong>, no aquí.
+                                  Fecha, hora y cancha se asignan en <strong>Sorteo de horarios</strong>.
                                 </span>
                                 <div className="flex gap-1">
                                   <Button variant="ghost" size="sm" onClick={() => openEdit(partido)}>
@@ -706,71 +753,164 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <CardHeader>
               <CardTitle>Sorteo de Horarios</CardTitle>
               <CardDescription>
-                Partidos de la categoría seleccionada que aún no tienen fila en programaciones. Usa canchas y horarios
-                de Configuración.
+                Asigna fecha, cancha y hora a los partidos del fixture que aún no tienen programación. Elige la categoría,
+                genera una propuesta al azar, ajusta manualmente y guarda cuando esté listo.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-1">
-                  <Label>Primera fecha a usar</Label>
+                  <Label>Categoría</Label>
+                  <Select value={sorteoCategoria} onValueChange={setSorteoCategoria}>
+                    <SelectTrigger className="w-full md:w-64">
+                      <SelectValue placeholder="Categoría" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categorias.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Primera fecha</Label>
                   <Input type="date" value={sorteoFecha} onChange={(e) => setSorteoFecha(e.target.value)} />
                 </div>
                 <div className="space-y-1">
                   <Label>Días a explorar</Label>
                   <Input value={sorteoDias} onChange={(e) => setSorteoDias(e.target.value)} className="w-24" />
                 </div>
-                <Button
-                  type="button"
-                  disabled={pendientesProgramar.length === 0}
-                  onClick={() => void ejecutarSorteo()}
-                >
+                <Button type="button" disabled={pendientesSorteo.length === 0} onClick={() => llenarBorradorSorteo()}>
                   <Shuffle className="mr-2 h-4 w-4" />
                   Asignar al azar
                 </Button>
+                <Button
+                  type="button"
+                  variant="default"
+                  disabled={guardandoSorteo || pendientesSorteo.length === 0}
+                  onClick={() => void guardarBorradorSorteo()}
+                >
+                  {guardandoSorteo ? 'Guardando…' : 'Guardar programación'}
+                </Button>
               </div>
 
-              {pendientesProgramar.length > 0 ? (
+              {pendientesSorteo.length > 0 ? (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Jornada</TableHead>
                       <TableHead>Partido</TableHead>
-                      <TableHead>Fecha base (fixture)</TableHead>
-                      <TableHead className="text-right">Programar</TableHead>
+                      <TableHead>Fecha</TableHead>
+                      <TableHead>Cancha</TableHead>
+                      <TableHead>Hora</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pendientesProgramar.map((partido) => (
-                      <TableRow key={partido.id}>
-                        <TableCell>Jornada {partido.jornada}</TableCell>
-                        <TableCell>
-                          {partido.equipoLocalNombre} vs {partido.equipoVisitanteNombre}
-                        </TableCell>
-                        <TableCell>{partido.fecha ? formatDate(partido.fecha) : '—'}</TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setProgPartido(partido)
-                              setProgFecha(sorteoFecha)
-                              setProgHora('09:00')
-                              setProgCancha(canchas[0]?.id ?? '')
-                            }}
-                          >
-                            Manual
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {pendientesSorteo.map((partido) => {
+                      const horasActivas = horariosLista.filter((h) => h.activo !== false)
+                      const canchasActivas = canchas.filter((c) => c.activa !== false)
+                      const d = sorteoDrafts[partido.id]
+                      const defaultHora = horasActivas[0]
+                        ? formatHoraUi(normalizeHoraDb(horasActivas[0]!.hora))
+                        : ''
+                      const eff = {
+                        fecha: d?.fecha ?? sorteoFecha,
+                        canchaId: d?.canchaId ?? canchasActivas[0]?.id ?? '',
+                        hora: d?.hora ?? defaultHora,
+                      }
+                      return (
+                        <TableRow key={partido.id}>
+                          <TableCell>Jornada {partido.jornada}</TableCell>
+                          <TableCell>
+                            {partido.equipoLocalNombre} vs {partido.equipoVisitanteNombre}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="date"
+                              className="min-w-[9.5rem]"
+                              value={eff.fecha}
+                              onChange={(e) =>
+                                setSorteoDrafts((prev) => ({
+                                  ...prev,
+                                  [partido.id]: { ...eff, fecha: e.target.value },
+                                }))
+                              }
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              value={eff.canchaId || canchasActivas[0]?.id}
+                              onValueChange={(v) =>
+                                setSorteoDrafts((prev) => ({
+                                  ...prev,
+                                  [partido.id]: { ...eff, canchaId: v },
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="min-w-[8rem]">
+                                <SelectValue placeholder="Cancha" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {canchasActivas.map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>
+                                    {c.nombre}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              value={eff.hora || defaultHora}
+                              onValueChange={(v) =>
+                                setSorteoDrafts((prev) => ({
+                                  ...prev,
+                                  [partido.id]: { ...eff, hora: v },
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="min-w-[6rem]">
+                                <SelectValue placeholder="Hora" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {horasActivas.map((h) => {
+                                  const label = formatHoraUi(normalizeHoraDb(h.hora))
+                                  return (
+                                    <SelectItem key={h.id} value={label}>
+                                      {label}
+                                    </SelectItem>
+                                  )
+                                })}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setProgPartido(partido)
+                                setProgFecha(eff.fecha)
+                                setProgHora(eff.hora || '09:00')
+                                setProgCancha(eff.canchaId || canchasActivas[0]?.id || '')
+                              }}
+                            >
+                              Manual
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               ) : (
                 <EmptyState
                   icon={Calendar}
-                  title="Nada pendiente"
-                  description="Todos los partidos de esta categoría ya tienen programación, o no hay partidos en el fixture."
+                  title="Nada pendiente en esta categoría"
+                  description="Todos los partidos de la categoría elegida ya tienen programación, o aún no hay fixture."
                 />
               )}
             </CardContent>
@@ -782,7 +922,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <EmptyState
               icon={Calendar}
               title="Sin partidos programados"
-              description="Aquí solo aparecen partidos con fecha, hora y cancha en programaciones. Usa Sorteo de horarios primero."
+              description="Aún no hay partidos programados. Primero crea el fixture y luego asigna horarios."
             />
           ) : (
             fechasOrdenadas.map((fecha) => {
@@ -850,6 +990,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                       nombre={partido.equipoLocalNombre}
                                       color={partido.categoriaColor}
                                       logoUrl={partido.equipoLocalLogoUrl}
+                                      logoPublicId={partido.equipoLocalLogoPublicId}
                                     />
                                     {partido.equipoLocalNombre}
                                   </div>
@@ -869,6 +1010,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                       nombre={partido.equipoVisitanteNombre}
                                       color="#64748b"
                                       logoUrl={partido.equipoVisitanteLogoUrl}
+                                      logoPublicId={partido.equipoVisitanteLogoPublicId}
                                     />
                                     {partido.equipoVisitanteNombre}
                                   </div>

@@ -21,6 +21,11 @@ import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias } from '@/features/categorias/useCategorias'
 import { getEquiposByCategoria } from '@/features/equipos/equiposService'
 import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
+import {
+  displayImagePresets,
+  inlineRemoteImagesForCapture,
+  resolveDisplayImageUrl,
+} from '@/features/uploads/uploadService'
 
 export function CarnetsPage() {
   const printRef = useRef<HTMLDivElement>(null)
@@ -60,6 +65,7 @@ export function CarnetsPage() {
   const handlePdf = async () => {
     if (!equipo || !torneo || jugadores.length === 0 || !printRef.current) return
     try {
+      await inlineRemoteImagesForCapture(printRef.current)
       const canvas = await html2canvas(printRef.current, {
         scale: 2,
         useCORS: true,
@@ -230,14 +236,30 @@ export function CarnetsPage() {
           </Card>
 
           <div ref={printRef} className="grid gap-6 rounded-xl border bg-slate-50 p-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {jugadores.map((jugador) => (
+            {jugadores.map((jugador) => {
+              const torneoLogoSrc = resolveDisplayImageUrl(
+                torneo.logo_public_id,
+                torneo.logo_url,
+                displayImagePresets.torneoLogo(),
+              )
+              const equipoLogoSrc = resolveDisplayImageUrl(
+                equipo?.logoPublicId,
+                equipo?.logoUrl,
+                displayImagePresets.equipoLogo(),
+              )
+              const jugadorFotoSrc = resolveDisplayImageUrl(
+                jugador.fotoPublicId,
+                jugador.fotoUrl,
+                displayImagePresets.jugadorFotoCarnet(),
+              )
+              return (
               <Card key={jugador.id} className="overflow-hidden border-0 shadow-lg ring-1 ring-slate-200">
                 <div className="h-1.5 bg-gradient-to-r from-slate-700 via-slate-500 to-slate-700" />
                 <CardContent className="space-y-4 p-5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      {torneo?.logo_url ? (
-                        <img src={torneo.logo_url} alt="" className="h-10 w-10 rounded-full border object-cover" />
+                      {torneoLogoSrc ? (
+                        <img src={torneoLogoSrc} alt="" className="h-10 w-10 rounded-full border object-cover" />
                       ) : (
                         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-white">
                           {torneo?.nombre?.slice(0, 2).toUpperCase()}
@@ -250,8 +272,8 @@ export function CarnetsPage() {
                         <p className="truncate text-xs text-slate-600">{categoria?.nombre}</p>
                       </div>
                     </div>
-                    {equipo?.logoUrl ? (
-                      <img src={equipo.logoUrl} alt="" className="h-9 w-9 rounded-md border object-cover" />
+                    {equipoLogoSrc ? (
+                      <img src={equipoLogoSrc} alt="" className="h-9 w-9 rounded-md border object-cover" />
                     ) : (
                       <div
                         className="flex h-9 w-9 items-center justify-center rounded-md text-[10px] font-bold text-white"
@@ -263,8 +285,8 @@ export function CarnetsPage() {
                   </div>
 
                   <div className="mx-auto flex h-28 w-24 items-center justify-center overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-inner">
-                    {jugador.fotoUrl ? (
-                      <img src={jugador.fotoUrl} alt="" className="h-full w-full object-cover" crossOrigin="anonymous" />
+                    {jugadorFotoSrc ? (
+                      <img src={jugadorFotoSrc} alt="" className="h-full w-full object-cover" crossOrigin="anonymous" />
                     ) : (
                       <User className="h-12 w-12 text-slate-300" />
                     )}
@@ -288,7 +310,8 @@ export function CarnetsPage() {
                 </CardContent>
                 <div className="h-1" style={{ backgroundColor: equipo?.color }} />
               </Card>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

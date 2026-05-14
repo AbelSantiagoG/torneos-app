@@ -3,7 +3,7 @@ import { getEquipoById } from '@/features/equipos/equiposService'
 import { createJugadorConEquipo } from '@/features/jugadores/jugadoresService'
 import { pickCell } from '@/features/excel/parseSheet'
 import { validarEdadCategoria } from '@/lib/jugadorEdad'
-import { toUserError } from '@/lib/supabaseErrors'
+import { translateUserError } from '@/lib/errorMessages'
 
 export type ImportJugadoresResult = {
   creados: number
@@ -37,6 +37,10 @@ export async function importJugadoresFromRows(
     const documento = pickCell(row, 'documento', 'doc', 'cedula', 'dni', 'id')
     const anioStr = pickCell(row, 'anio_nacimiento', 'año_nacimiento', 'ano_nacimiento', 'año', 'anio', 'year')
     const fechaNac = pickCell(row, 'fecha_nacimiento', 'fecha nacimiento', 'birthdate')
+    if (fechaNac.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(fechaNac.trim())) {
+      errores.push({ fila, mensaje: 'fecha_nacimiento debe tener formato YYYY-MM-DD.' })
+      continue
+    }
     const fotoUrl = pickCell(row, 'foto_url', 'foto', 'imagen', 'url_foto')
     const observaciones = pickCell(row, 'observaciones', 'notas', 'notes')
 
@@ -82,7 +86,7 @@ export async function importJugadoresFromRows(
       )
       creados++
     } catch (e) {
-      const msg = toUserError(e, 'jugador').message
+      const msg = translateUserError(e, 'jugador')
       if (msg.includes('Ya existe un jugador con ese documento')) {
         omitidos.push(`${documento} (${nombreCompleto})`)
       } else {
