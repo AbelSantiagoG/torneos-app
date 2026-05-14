@@ -173,7 +173,7 @@ export async function createJugadorConEquipo(
   }
 
   const cat = await getCategoriaById(equipo.categoria_id)
-  const edadMsg = validarEdadCategoria(anio, cat?.edad_min ?? null, cat?.edad_max ?? null)
+  const edadMsg = validarEdadCategoria(anio, cat?.edad_max ?? null)
   if (edadMsg) {
     throw new Error(edadMsg)
   }

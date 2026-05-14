@@ -21,7 +21,15 @@ export interface Categoria {
 /** Torneo activo expuesto a la UI (desde fila Supabase). */
 export type TorneoActivo = Pick<
   TorneoRow,
-  'id' | 'nombre' | 'organizacion' | 'logo_url' | 'logo_public_id' | 'fecha_inicio' | 'fecha_fin' | 'descripcion'
+  | 'id'
+  | 'nombre'
+  | 'organizacion'
+  | 'logo_url'
+  | 'logo_public_id'
+  | 'fecha_inicio'
+  | 'fecha_fin'
+  | 'descripcion'
+  | 'estado'
 >
 
 export function mapCategoriaRow(

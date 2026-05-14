@@ -20,6 +20,14 @@ export function filterVistaRowsPorCategoria(rows: VistaRow[], categoriaId: strin
   })
 }
 
+export function filterVistaRowsPorFase(rows: VistaRow[], faseTorneoId: string): VistaRow[] {
+  if (!faseTorneoId) return rows
+  return rows.filter((r) => {
+    const fid = pickStr(r, 'fase_torneo_id', 'fase_id')
+    return !fid || fid === faseTorneoId
+  })
+}
+
 export async function fetchEstadisticasTorneo(torneoId: string): Promise<{
   tabla: VistaRow[]
   goleadores: VistaRow[]

@@ -28,6 +28,7 @@ function mapActivo(row: TorneoRow): TorneoActivo {
     fecha_inicio: row.fecha_inicio,
     fecha_fin: row.fecha_fin,
     descripcion: row.descripcion,
+    estado: row.estado,
   }
 }
 

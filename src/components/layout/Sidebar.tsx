@@ -22,6 +22,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
+import { resolveDisplayImageUrl } from '@/features/uploads/uploadService'
 
 interface SidebarProps {
   collapsed: boolean
@@ -50,6 +51,11 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
 
   const tituloTorneo = torneo?.nombre ?? (torneoLoading ? '…' : 'Torneo')
   const subtituloOrg = torneo?.organizacion ?? ''
+  const logoSrc = resolveDisplayImageUrl(
+    torneo?.logo_public_id,
+    torneo?.logo_url,
+    { width: 72, height: 72, crop: 'fit', quality: 'auto', format: 'auto' },
+  )
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -66,9 +72,13 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
               collapsed ? 'justify-center' : 'gap-3',
             )}
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-              <Award className="h-5 w-5" />
-            </div>
+            {logoSrc ? (
+              <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg border border-sidebar-border object-cover" />
+            ) : (
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                <Award className="h-5 w-5" />
+              </div>
+            )}
             {!collapsed && (
               <div className="min-w-0 flex flex-col">
                 <span className="truncate text-sm font-semibold leading-tight">{tituloTorneo}</span>

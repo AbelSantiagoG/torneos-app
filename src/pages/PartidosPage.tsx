@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Calendar,
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   Edit,
   Trash2,
   Plus,
+  Layers,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/common/PageHeader'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -55,6 +58,7 @@ import {
   createPartidoManual,
   upsertProgramacion,
   generarBorradorSorteo,
+  type SorteoBorradorSlot,
 } from '@/features/partidos/partidosService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
 import { isJugadoEstado } from '@/features/partidos/partidosUi'
@@ -62,8 +66,13 @@ import { countEquiposEnCategoria } from '@/features/equipos/equiposService'
 import { useEquipos } from '@/features/equipos/useEquipos'
 import { useCanchas } from '@/features/canchas/useCanchas'
 import { useHorarios } from '@/features/horarios/useHorarios'
-import { formatHoraUi, normalizeHoraDb } from '@/features/horarios/horariosService'
+import { formatHoraUi, HORA_FRANJAS_PREDETERMINADAS, normalizeHoraDb } from '@/features/horarios/horariosService'
 import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/uploadService'
+import {
+  listFasesPorCategoria,
+  createFaseTorneo,
+  setFaseActivaCategoria,
+} from '@/features/fases/fasesTorneoService'
 
 interface PartidosPageProps {
   onOpenActa?: () => void
@@ -127,7 +136,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [sorteoCategoria, setSorteoCategoria] = useState('')
   const [sorteoFecha, setSorteoFecha] = useState(() => new Date().toISOString().slice(0, 10))
   const [sorteoDias, setSorteoDias] = useState('14')
-  const [sorteoDrafts, setSorteoDrafts] = useState<Record<string, { fecha: string; canchaId: string; hora: string }>>({})
+  const [sorteoDrafts, setSorteoDrafts] = useState<Record<string, SorteoBorradorSlot>>({})
   const [guardandoSorteo, setGuardandoSorteo] = useState(false)
 
   const [editPartido, setEditPartido] = useState<PartidoListaUi | null>(null)
@@ -141,11 +150,19 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [nuevoVisit, setNuevoVisit] = useState('')
   const [nuevoJornada, setNuevoJornada] = useState('1')
   const [nuevoOrden, setNuevoOrden] = useState('0')
+  const [manualFaseId, setManualFaseId] = useState('')
+  const [faseDialogOpen, setFaseDialogOpen] = useState(false)
+  const [faseNombre, setFaseNombre] = useState('')
+  const [faseTipo, setFaseTipo] = useState('cuadrangulares')
+  const [faseReinicia, setFaseReinicia] = useState(false)
 
   const [progPartido, setProgPartido] = useState<PartidoListaUi | null>(null)
   const [progFecha, setProgFecha] = useState('')
   const [progHora, setProgHora] = useState('09:00')
+  const [progHoraFin, setProgHoraFin] = useState('')
   const [progCancha, setProgCancha] = useState('')
+  const [progEstado, setProgEstado] = useState('programado')
+  const [progObservaciones, setProgObservaciones] = useState('')
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
@@ -160,6 +177,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const { data: equiposCat = [] } = useEquipos(selectedCategoria || undefined, torneoId)
   const { data: canchas = [] } = useCanchas(torneoId)
   const { data: horariosLista = [] } = useHorarios(torneoId)
+
+  const { data: fasesList = [], refetch: refetchFases } = useQuery({
+    queryKey: ['fases-categoria', selectedCategoria],
+    enabled: Boolean(selectedCategoria),
+    queryFn: () => listFasesPorCategoria(selectedCategoria),
+  })
 
   useEffect(() => {
     if (parError) toast.error(translateUserError(parError, 'fixture'))
@@ -207,10 +230,69 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   )
 
   const partidosPorFecha = useMemo(() => groupByFecha(programados), [programados])
-  const fechasOrdenadas = useMemo(() => Object.keys(partidosPorFecha).sort(), [partidosPorFecha])
+
+  const fechasOrdenadas = useMemo(
+    () => Object.keys(partidosPorFecha).filter((k) => k !== 'sin-fecha').sort(),
+    [partidosPorFecha],
+  )
+
+  const horasParaProgramacion = useMemo(() => {
+    const rows = horariosLista.filter((h) => h.activo !== false)
+    if (rows.length) return rows.map((h) => ({ id: h.id, hora: h.hora }))
+    return HORA_FRANJAS_PREDETERMINADAS.map((h, i) => ({ id: `def-${i}`, hora: h.hora }))
+  }, [horariosLista])
+
+  const openProgramacion = (p: PartidoListaUi, draft?: SorteoBorradorSlot | null) => {
+    const d = draft ?? sorteoDrafts[p.id]
+    setProgPartido(p)
+    setProgFecha((d?.fecha ?? p.fecha)?.slice(0, 10) || '')
+    const h = (d?.hora ?? p.hora) || '09:00'
+    setProgHora(h.length >= 5 ? h.slice(0, 5) : h)
+    const hf = d?.horaFin ?? p.horaFin ?? ''
+    setProgHoraFin(hf && hf.length >= 5 ? hf.slice(0, 5) : hf ? hf : '')
+    setProgCancha((d?.canchaId ?? p.canchaId) || '')
+    setProgEstado(p.estadoProgramacion || 'programado')
+    setProgObservaciones(p.observaciones || '')
+  }
 
   const invalidatePartidos = () => {
     if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
+  }
+
+  const handleCrearFase = async () => {
+    if (!selectedCategoria) {
+      toast.error('Selecciona una categoría en «Por categoría».')
+      return
+    }
+    if (!faseNombre.trim()) {
+      toast.error('Indica un nombre para la fase.')
+      return
+    }
+    try {
+      await createFaseTorneo({
+        categoria_id: selectedCategoria,
+        nombre: faseNombre.trim(),
+        tipo: faseTipo,
+        reinicia_tabla: faseReinicia,
+      })
+      toast.success('Fase creada.')
+      setFaseDialogOpen(false)
+      setFaseNombre('')
+      void refetchFases()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    }
+  }
+
+  const handleActivarFase = async (faseId: string) => {
+    if (!selectedCategoria) return
+    try {
+      await setFaseActivaCategoria(selectedCategoria, faseId)
+      toast.success('Fase activa actualizada.')
+      void refetchFases()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    }
   }
 
   const ejecutarGenerarFixture = async () => {
@@ -234,7 +316,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.error('Esta categoría ya tiene partidos en el fixture.')
         return
       }
-      await generarFixtureCategoria(selectedCategoria, new Date().toISOString().slice(0, 10))
+      await generarFixtureCategoria(selectedCategoria)
       toast.success('Fixture generado.')
       setFixtureOpen(false)
       invalidatePartidos()
@@ -294,6 +376,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         equipo_local_id: nuevoLocal,
         equipo_visitante_id: nuevoVisit,
         jornada: Number(nuevoJornada) || 1,
+        fase_torneo_id: manualFaseId || null,
         orden: (() => {
           const n = Number(nuevoOrden)
           return n > 0 ? n : undefined
@@ -305,6 +388,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       setNuevoVisit('')
       setNuevoJornada('1')
       setNuevoOrden('0')
+      setManualFaseId('')
       invalidatePartidos()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
@@ -319,8 +403,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       return
     }
     const canchasActivas = canchas.filter((c) => c.activa !== false)
-    if (!canchasActivas.length || !horariosLista.length) {
-      toast.error('Configura canchas activas y horarios en Configuración.')
+    if (!canchasActivas.length) {
+      toast.error('Configura al menos una cancha activa en Configuración.')
       return
     }
     if (!pendientesSorteo.length) {
@@ -332,7 +416,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         pendientes: pendientesSorteo,
         programados,
         canchas: canchasActivas.map((c) => ({ id: c.id })),
-        horarios: horariosLista.map((h) => ({ hora: h.hora })),
+        horarios: horasParaProgramacion.map((h) => ({ hora: h.hora })),
         fechaInicio: sorteoFecha,
         dias,
       })
@@ -348,9 +432,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setGuardandoSorteo(true)
     let guardados = 0
     try {
-      const horasActivas = horariosLista.filter((h) => h.activo !== false)
+      const horasActivas = horasParaProgramacion
       const canchasActivas = canchas.filter((c) => c.activa !== false)
-      const defaultHora = horasActivas[0] ? formatHoraUi(normalizeHoraDb(horasActivas[0]!.hora)) : ''
+      const defaultHora = horasActivas[0] ? formatHoraUi(normalizeHoraDb(horasActivas[0]!.hora)) : '09:00'
 
       for (const p of pendientesSorteo) {
         const d = sorteoDrafts[p.id]
@@ -365,6 +449,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           cancha_id: eff.canchaId,
           fecha: eff.fecha,
           hora_inicio: eff.hora,
+          hora_fin: d?.horaFin,
         })
         guardados++
       }
@@ -393,6 +478,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         cancha_id: progCancha,
         fecha: progFecha,
         hora_inicio: progHora,
+        hora_fin: progHoraFin || undefined,
+        estado: progEstado,
+        observaciones: progObservaciones.trim() || null,
       })
       toast.success('Programación guardada')
       setProgPartido(null)
@@ -551,6 +639,22 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <Label>Orden (opcional, 0 = automático)</Label>
               <Input value={nuevoOrden} onChange={(e) => setNuevoOrden(e.target.value)} type="number" />
             </div>
+            <div className="space-y-1">
+              <Label>Fase del torneo (opcional)</Label>
+              <Select value={manualFaseId || '__none__'} onValueChange={(v) => setManualFaseId(v === '__none__' ? '' : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Sin fase" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Sin fase</SelectItem>
+                  {fasesList.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -564,9 +668,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       <Dialog open={Boolean(progPartido)} onOpenChange={(o) => !o && setProgPartido(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Programar partido</DialogTitle>
+            <DialogTitle>{progPartido?.programacionId ? 'Editar programación' : 'Programar partido'}</DialogTitle>
             <DialogDescription>
-              Crea o actualiza la fila en programaciones (cancha obligatoria en base de datos).
+              Modifica fecha, horas, cancha, estado u observaciones. Se evita duplicar la misma cancha y hora de inicio.
             </DialogDescription>
           </DialogHeader>
           {progPartido && (
@@ -578,9 +682,15 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 <Label>Fecha</Label>
                 <Input type="date" value={progFecha} onChange={(e) => setProgFecha(e.target.value)} />
               </div>
-              <div className="space-y-1">
-                <Label>Hora inicio</Label>
-                <Input type="time" value={progHora} onChange={(e) => setProgHora(e.target.value)} />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Hora inicio</Label>
+                  <Input type="time" value={progHora} onChange={(e) => setProgHora(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Hora fin</Label>
+                  <Input type="time" value={progHoraFin} onChange={(e) => setProgHoraFin(e.target.value)} />
+                </div>
               </div>
               <div className="space-y-1">
                 <Label>Cancha</Label>
@@ -597,6 +707,25 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-1">
+                <Label>Estado</Label>
+                <Select value={progEstado} onValueChange={setProgEstado}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="programado">Programado</SelectItem>
+                    <SelectItem value="jugado">Jugado</SelectItem>
+                    <SelectItem value="suspendido">Suspendido</SelectItem>
+                    <SelectItem value="cancelado">Cancelado</SelectItem>
+                    <SelectItem value="reprogramado">Reprogramado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Observaciones</Label>
+                <Textarea rows={2} value={progObservaciones} onChange={(e) => setProgObservaciones(e.target.value)} />
+              </div>
             </div>
           )}
           <DialogFooter>
@@ -609,10 +738,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       </Dialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3 lg:inline-flex lg:w-auto">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:inline-flex lg:w-auto">
           <TabsTrigger value="categoria">Por Categoría</TabsTrigger>
           <TabsTrigger value="sorteo">Sorteo de Horarios</TabsTrigger>
           <TabsTrigger value="fecha">Por Fecha</TabsTrigger>
+          <TabsTrigger value="fases" className="gap-1">
+            <Layers className="h-4 w-4" />
+            Fases
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="categoria" className="space-y-4">
@@ -718,23 +851,50 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 </div>
                               </div>
 
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
-                                <span>
-                                  Fecha, hora y cancha se asignan en <strong>Sorteo de horarios</strong>.
-                                </span>
-                                <div className="flex gap-1">
-                                  <Button variant="ghost" size="sm" onClick={() => openEdit(partido)}>
-                                    <Edit className="h-3 w-3" />
+                              <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                                {(() => {
+                                  const jugado = isJugadoEstado(partido.estado)
+                                  const programado = Boolean(partido.programacionId) && !jugado
+                                  return (
+                                    <>
+                                      {jugado ? (
+                                        <Badge>Jugado</Badge>
+                                      ) : programado ? (
+                                        <Badge variant="secondary">Programado</Badge>
+                                      ) : (
+                                        <Badge variant="outline">Pendiente de programar</Badge>
+                                      )}
+                                    </>
+                                  )
+                                })()}
+                              </div>
+                              {(partido.programacionId && (partido.fecha || partido.hora || partido.cancha)) ? (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  {partido.fecha ? formatDate(partido.fecha) : ''}
+                                  {partido.hora ? ` · ${partido.hora}` : ''}
+                                  {partido.cancha ? ` · ${partido.cancha}` : ''}
+                                </p>
+                              ) : null}
+                              <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openProgramacion(partido)}
+                                >
+                                  {partido.programacionId ? 'Editar programación' : 'Programar'}
+                                </Button>
+                                <Button variant="ghost" size="sm" onClick={() => openEdit(partido)}>
+                                  <Edit className="h-3 w-3" />
+                                </Button>
+                                <Button variant="ghost" size="sm" onClick={() => void eliminarPartido(partido)}>
+                                  <Trash2 className="h-3 w-3 text-destructive" />
+                                </Button>
+                                {onOpenActa && (
+                                  <Button variant="ghost" size="sm" onClick={onOpenActa}>
+                                    Acta
                                   </Button>
-                                  <Button variant="ghost" size="sm" onClick={() => void eliminarPartido(partido)}>
-                                    <Trash2 className="h-3 w-3 text-destructive" />
-                                  </Button>
-                                  {onOpenActa && (
-                                    <Button variant="ghost" size="sm" onClick={onOpenActa}>
-                                      Acta
-                                    </Button>
-                                  )}
-                                </div>
+                                )}
                               </div>
                             </div>
                           </Card>
@@ -804,22 +964,23 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       <TableHead>Partido</TableHead>
                       <TableHead>Fecha</TableHead>
                       <TableHead>Cancha</TableHead>
-                      <TableHead>Hora</TableHead>
+                      <TableHead>Hora inicio</TableHead>
+                      <TableHead>Hora fin</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {pendientesSorteo.map((partido) => {
-                      const horasActivas = horariosLista.filter((h) => h.activo !== false)
                       const canchasActivas = canchas.filter((c) => c.activa !== false)
                       const d = sorteoDrafts[partido.id]
-                      const defaultHora = horasActivas[0]
-                        ? formatHoraUi(normalizeHoraDb(horasActivas[0]!.hora))
-                        : ''
-                      const eff = {
+                      const defaultHora = horasParaProgramacion[0]
+                        ? formatHoraUi(normalizeHoraDb(horasParaProgramacion[0]!.hora))
+                        : '09:00'
+                      const eff: SorteoBorradorSlot = {
                         fecha: d?.fecha ?? sorteoFecha,
                         canchaId: d?.canchaId ?? canchasActivas[0]?.id ?? '',
                         hora: d?.hora ?? defaultHora,
+                        horaFin: d?.horaFin,
                       }
                       return (
                         <TableRow key={partido.id}>
@@ -863,40 +1024,36 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                             </Select>
                           </TableCell>
                           <TableCell>
-                            <Select
-                              value={eff.hora || defaultHora}
-                              onValueChange={(v) =>
+                            <Input
+                              type="time"
+                              className="min-w-[6.5rem]"
+                              value={(eff.hora || defaultHora).slice(0, 5)}
+                              onChange={(e) =>
                                 setSorteoDrafts((prev) => ({
                                   ...prev,
-                                  [partido.id]: { ...eff, hora: v },
+                                  [partido.id]: { ...eff, hora: e.target.value },
                                 }))
                               }
-                            >
-                              <SelectTrigger className="min-w-[6rem]">
-                                <SelectValue placeholder="Hora" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {horasActivas.map((h) => {
-                                  const label = formatHoraUi(normalizeHoraDb(h.hora))
-                                  return (
-                                    <SelectItem key={h.id} value={label}>
-                                      {label}
-                                    </SelectItem>
-                                  )
-                                })}
-                              </SelectContent>
-                            </Select>
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="time"
+                              className="min-w-[6.5rem]"
+                              value={(eff.horaFin || '').slice(0, 5)}
+                              onChange={(e) =>
+                                setSorteoDrafts((prev) => ({
+                                  ...prev,
+                                  [partido.id]: { ...eff, horaFin: e.target.value },
+                                }))
+                              }
+                            />
                           </TableCell>
                           <TableCell className="text-right">
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => {
-                                setProgPartido(partido)
-                                setProgFecha(eff.fecha)
-                                setProgHora(eff.hora || '09:00')
-                                setProgCancha(eff.canchaId || canchasActivas[0]?.id || '')
-                              }}
+                              onClick={() => openProgramacion(partido, eff)}
                             >
                               Manual
                             </Button>
@@ -912,6 +1069,72 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   title="Nada pendiente en esta categoría"
                   description="Todos los partidos de la categoría elegida ya tienen programación, o aún no hay fixture."
                 />
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="fases" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle>Fases del torneo</CardTitle>
+                <CardDescription>
+                  Usa la categoría elegida en «Por categoría». La fase activa orienta el fixture; los partidos manuales
+                  pueden asociarse a una fase.
+                </CardDescription>
+              </div>
+              <Button type="button" size="sm" disabled={!selectedCategoria} onClick={() => setFaseDialogOpen(true)}>
+                <Plus className="mr-1 h-4 w-4" />
+                Nueva fase
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {!selectedCategoria ? (
+                <p className="text-sm text-muted-foreground">Selecciona una categoría en la pestaña «Por categoría».</p>
+              ) : fasesList.length === 0 ? (
+                <EmptyState
+                  icon={Layers}
+                  title="Sin fases"
+                  description="Crea la primera fase (por ejemplo «Todos contra todos» o «Eliminatoria»)."
+                  action={
+                    <Button type="button" onClick={() => setFaseDialogOpen(true)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Crear fase
+                    </Button>
+                  }
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Reinicia tabla</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {fasesList.map((f) => (
+                      <TableRow key={f.id}>
+                        <TableCell className="font-medium">{f.nombre}</TableCell>
+                        <TableCell>{f.tipo}</TableCell>
+                        <TableCell>{f.reinicia_tabla ? 'Sí' : 'No'}</TableCell>
+                        <TableCell>
+                          {f.activa ? <Badge>Activa</Badge> : <Badge variant="outline">Inactiva</Badge>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {!f.activa && (
+                            <Button type="button" size="sm" variant="outline" onClick={() => void handleActivarFase(f.id)}>
+                              Marcar activa
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
             </CardContent>
           </Card>
@@ -1035,6 +1258,53 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           )}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={faseDialogOpen} onOpenChange={setFaseDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nueva fase</DialogTitle>
+            <DialogDescription>En la categoría actualmente seleccionada en «Por categoría».</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-1">
+              <Label>Nombre</Label>
+              <Input value={faseNombre} onChange={(e) => setFaseNombre(e.target.value)} placeholder="Ej: Eliminatoria" />
+            </div>
+            <div className="space-y-1">
+              <Label>Tipo</Label>
+              <Select value={faseTipo} onValueChange={setFaseTipo}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos_contra_todos">Todos contra todos</SelectItem>
+                  <SelectItem value="fase_grupos">Fase de grupos</SelectItem>
+                  <SelectItem value="cuadrangulares">Cuadrangulares</SelectItem>
+                  <SelectItem value="eliminatoria_directa">Eliminatoria directa</SelectItem>
+                  <SelectItem value="final">Final</SelectItem>
+                  <SelectItem value="tercer_puesto">Tercer puesto</SelectItem>
+                  <SelectItem value="amistoso">Amistoso</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <p className="text-sm font-medium">Reinicia tabla de posiciones</p>
+                <p className="text-xs text-muted-foreground">Si está activo, las estadísticas de esta fase arrancan en cero.</p>
+              </div>
+              <Switch checked={faseReinicia} onCheckedChange={(v) => setFaseReinicia(v === true)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFaseDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={() => void handleCrearFase()}>
+              Crear
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

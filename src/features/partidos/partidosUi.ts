@@ -22,6 +22,14 @@ export type PartidoDashboardUi = {
   equipoLocalId?: string | null
   equipoVisitanteId?: string | null
   programacionId?: string | null
+  /** Si existe acta: false = en edición, true = cerrada, null = sin fila aún. */
+  actaCerrada?: boolean | null
+  /** Fase del torneo (tabla fases_torneo), si aplica. */
+  faseTorneoId?: string | null
+  /** Observaciones de la fila en programaciones_partido (si existe). */
+  observaciones?: string | null
+  /** Estado de la fila en programaciones_partido (si existe). */
+  estadoProgramacion?: string | null
   /** Orden dentro de la jornada (fixture). */
   orden?: number
 }

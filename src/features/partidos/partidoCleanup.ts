@@ -4,6 +4,8 @@ import { toUserError } from '@/lib/supabaseErrors'
 /** Elimina partido y dependencias (sin importar equiposService para evitar ciclos). */
 export async function deletePartidoCascade(partidoId: string): Promise<void> {
   const steps = [
+    () => supabase.from('cambios_partido').delete().eq('partido_id', partidoId),
+    () => supabase.from('partido_jugadores').delete().eq('partido_id', partidoId),
     () => supabase.from('programaciones_partido').delete().eq('partido_id', partidoId),
     () => supabase.from('arbitrajes').delete().eq('partido_id', partidoId),
     () => supabase.from('goles').delete().eq('partido_id', partidoId),

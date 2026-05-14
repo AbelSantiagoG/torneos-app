@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/features/auth/AuthProvider'
+import { ThemeProvider } from '@/features/theme/ThemeProvider'
 import { TorneoProvider } from '@/features/torneos/TorneoProvider'
 import { GuestRoute, ProtectedRoute, RootRedirect } from '@/routes/ProtectedRoute'
 import { AppLayout } from '@/layouts/AppLayout'
@@ -78,12 +79,14 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AuthProvider>
-          <TorneoProvider>
-            <AppRoutes />
-            <Toaster richColors closeButton position="top-right" />
-          </TorneoProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <TorneoProvider>
+              <AppRoutes />
+              <Toaster richColors closeButton position="top-right" />
+            </TorneoProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )

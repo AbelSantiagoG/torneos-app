@@ -82,7 +82,6 @@ export function CategoriasPage() {
     color: '#22c55e',
     valorInscripcion: 150000,
     tarifaArbitraje: 0,
-    edadMin: '' as string,
     edadMax: '' as string,
     formato: 'todos_contra_todos' as FormatoCompetenciaUi,
   })
@@ -108,7 +107,6 @@ export function CategoriasPage() {
         color: categoria.color,
         valorInscripcion: categoria.valorInscripcion,
         tarifaArbitraje: categoria.tarifaArbitraje,
-        edadMin: categoria.edadMin != null ? String(categoria.edadMin) : '',
         edadMax: categoria.edadMax != null ? String(categoria.edadMax) : '',
         formato: categoria.formato ?? 'todos_contra_todos',
       })
@@ -120,7 +118,6 @@ export function CategoriasPage() {
         color: '#22c55e',
         valorInscripcion: 150000,
         tarifaArbitraje: 0,
-        edadMin: '',
         edadMax: '',
         formato: 'todos_contra_todos',
       })
@@ -137,18 +134,13 @@ export function CategoriasPage() {
       toast.error('El nombre de la categoría es obligatorio')
       return
     }
-    if (!formData.edadMin.trim() || !formData.edadMax.trim()) {
-      toast.error('La edad mínima y la edad máxima son obligatorias.')
+    if (!formData.edadMax.trim()) {
+      toast.error('La edad máxima es obligatoria (por ejemplo 5 para Sub-5).')
       return
     }
-    const edadMin = Number(formData.edadMin)
     const edadMax = Number(formData.edadMax)
-    if (Number.isNaN(edadMin) || Number.isNaN(edadMax)) {
-      toast.error('Las edades deben ser números válidos.')
-      return
-    }
-    if (edadMin > edadMax) {
-      toast.error('La edad mínima no puede ser mayor que la edad máxima.')
+    if (Number.isNaN(edadMax) || edadMax < 0 || edadMax > 99) {
+      toast.error('Indica una edad máxima válida (0 a 99).')
       return
     }
     if (!formData.color?.trim()) {
@@ -178,7 +170,7 @@ export function CategoriasPage() {
             color: formData.color,
             valor_inscripcion: formData.valorInscripcion,
             tarifa_arbitraje: formData.tarifaArbitraje,
-            edad_min: edadMin,
+            edad_min: null,
             edad_max: edadMax,
             formato: formData.formato,
           },
@@ -191,7 +183,7 @@ export function CategoriasPage() {
           color: formData.color,
           valor_inscripcion: formData.valorInscripcion,
           tarifa_arbitraje: formData.tarifaArbitraje,
-          edad_min: edadMin,
+          edad_min: null,
           edad_max: edadMax,
           formato: formData.formato,
         })
@@ -296,25 +288,20 @@ export function CategoriasPage() {
                     onChange={(e) => setFormData({ ...formData, rangoEdad: e.target.value })}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="edadMin">Edad mínima</Label>
-                    <Input
-                      id="edadMin"
-                      type="number"
-                      value={formData.edadMin}
-                      onChange={(e) => setFormData({ ...formData, edadMin: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edadMax">Edad máxima</Label>
-                    <Input
-                      id="edadMax"
-                      type="number"
-                      value={formData.edadMax}
-                      onChange={(e) => setFormData({ ...formData, edadMax: e.target.value })}
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edadMax">Edad máxima (años cumplidos)</Label>
+                  <Input
+                    id="edadMax"
+                    type="number"
+                    min={0}
+                    max={99}
+                    placeholder="Ej: 5 para Sub-5"
+                    value={formData.edadMax}
+                    onChange={(e) => setFormData({ ...formData, edadMax: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Ejemplo: categoría Sub-5 → edad máxima 5. Se usa para validar jugadores al inscribirlos.
+                  </p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -457,8 +444,8 @@ export function CategoriasPage() {
                 <TableRow>
                   <TableHead>Categoría</TableHead>
                   <TableHead>Rango de Edad</TableHead>
+                  <TableHead>Edad máx.</TableHead>
                   <TableHead>Formato</TableHead>
-                  <TableHead>Color</TableHead>
                   <TableHead>Valor Inscripción</TableHead>
                   <TableHead className="text-center">Equipos</TableHead>
                   <TableHead className="text-center">Partidos</TableHead>
@@ -469,15 +456,19 @@ export function CategoriasPage() {
               <TableBody>
                 {categorias.map((categoria) => (
                   <TableRow key={categoria.id}>
-                    <TableCell className="font-medium">{categoria.nombre}</TableCell>
-                    <TableCell>{categoria.rangoEdad || '—'}</TableCell>
-                    <TableCell>{FORMATO_LABELS[categoria.formato] ?? categoria.formato}</TableCell>
-                    <TableCell>
+                    <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
-                        <div className="h-4 w-4 rounded-full border" style={{ backgroundColor: categoria.color }} />
-                        <span className="text-xs text-muted-foreground">{categoria.color}</span>
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: categoria.color }}
+                          title="Color en la app"
+                        />
+                        {categoria.nombre}
                       </div>
                     </TableCell>
+                    <TableCell>{categoria.rangoEdad || '—'}</TableCell>
+                    <TableCell>{categoria.edadMax != null ? categoria.edadMax : '—'}</TableCell>
+                    <TableCell>{FORMATO_LABELS[categoria.formato] ?? categoria.formato}</TableCell>
                     <TableCell>{formatCurrency(categoria.valorInscripcion)}</TableCell>
                     <TableCell className="text-center">{categoria.equipos}</TableCell>
                     <TableCell className="text-center">{categoria.partidos}</TableCell>

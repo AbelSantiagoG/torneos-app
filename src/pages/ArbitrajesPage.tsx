@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Printer, CheckCircle, Clock, DollarSign, Calendar, Filter } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Printer, CheckCircle, Clock, DollarSign, Calendar, Filter, Plus } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -25,19 +26,22 @@ import { StatCard } from '@/components/common/StatCard'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatCurrency } from '@/lib/utils'
+import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias } from '@/features/categorias/useCategorias'
-import { useArbitrajes } from '@/features/arbitrajes/useArbitrajes'
-import { pickBool, pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
+import { useArbitrajes, arbitrajesQueryKey } from '@/features/arbitrajes/useArbitrajes'
+import { pickStr } from '@/features/_shared/supabaseHelpers'
 import type { ArbitrajeRowUi } from '@/features/arbitrajes/arbitrajesService'
+import { crearArbitrajeSiNoExiste } from '@/features/arbitrajes/arbitrajesService'
 
 function rowKeys(rows: ArbitrajeRowUi[]): string[] {
   const first = rows[0]
   if (!first) return []
-  return Object.keys(first).filter((k) => !['torneo_id'].includes(k)).slice(0, 12)
+  return Object.keys(first).filter((k) => !['torneo_id'].includes(k)).slice(0, 14)
 }
 
 export function ArbitrajesPage() {
+  const qc = useQueryClient()
   const [filterCategoria, setFilterCategoria] = useState('all')
   const [filterEstado, setFilterEstado] = useState('all')
 
@@ -47,16 +51,18 @@ export function ArbitrajesPage() {
   const { data, isLoading, error } = useArbitrajes(torneoId)
 
   useEffect(() => {
-    if (error) toast.error(error instanceof Error ? error.message : 'Error al cargar arbitrajes')
+    if (error) toast.error(translateUserError(error, 'finanzas'))
   }, [error])
 
   const lista = data?.lista ?? []
+  const desdeActas = data?.desdeActas ?? []
   const resumen = data?.resumen
 
-  const keys = useMemo(() => rowKeys(lista), [lista])
+  const fuente = desdeActas.length ? desdeActas : lista
+  const keys = useMemo(() => rowKeys(fuente), [fuente])
 
   const filtered = useMemo(() => {
-    return lista.filter((row) => {
+    return fuente.filter((row) => {
       const r = row as Record<string, unknown>
       const cid = pickStr(r, 'categoria_id')
       if (filterCategoria !== 'all' && cid && cid !== filterCategoria) return false
@@ -70,7 +76,36 @@ export function ArbitrajesPage() {
       }
       return true
     })
-  }, [lista, filterCategoria, filterEstado])
+  }, [fuente, filterCategoria, filterEstado])
+
+  const tarifaPorCategoria = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const c of categorias) m.set(c.id, c.tarifaArbitraje)
+    return m
+  }, [categorias])
+
+  const registrarArbitraje = async (row: ArbitrajeRowUi) => {
+    if (!torneoId) return
+    const r = row as Record<string, unknown>
+    const partidoId = pickStr(r, 'partido_id')
+    const catId = pickStr(r, 'categoria_id')
+    if (!partidoId) {
+      toast.error('No se pudo identificar el partido en la vista.')
+      return
+    }
+    const valor = tarifaPorCategoria.get(catId) ?? pickNumSafe(r, 'valor_arbitraje', 'tarifa_arbitraje', 'valor')
+    if (!valor || valor <= 0) {
+      toast.error('Define la tarifa de arbitraje en la categoría antes de registrar.')
+      return
+    }
+    try {
+      await crearArbitrajeSiNoExiste({ torneo_id: torneoId, partido_id: partidoId, valor })
+      toast.success('Arbitraje registrado.')
+      void qc.invalidateQueries({ queryKey: arbitrajesQueryKey(torneoId) })
+    } catch (e) {
+      toast.error(translateUserError(e, 'finanzas'))
+    }
+  }
 
   if (torneoLoading) {
     return (
@@ -94,17 +129,17 @@ export function ArbitrajesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Arbitrajes"
-        description="Lista desde arbitrajes y resumen vw_resumen_arbitrajes"
+        description="Partidos con acta (vista vw_actas_partido_detalle) y registros en arbitrajes."
         actions={
           <Button variant="outline" disabled>
             <Printer className="mr-2 h-4 w-4" />
-            Imprimir Resumen
+            Imprimir resumen
           </Button>
         }
       />
 
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard title="Partidos (vista)" value={resumen?.totalPartidos ?? 0} icon={Calendar} />
+        <StatCard title="Partidos (vista resumen)" value={resumen?.totalPartidos ?? 0} icon={Calendar} />
         <StatCard
           title="Total pagado (vista)"
           value={formatCurrency(resumen?.totalPagado ?? 0)}
@@ -161,8 +196,10 @@ export function ArbitrajesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Detalle de arbitrajes</CardTitle>
-          <CardDescription>Columnas según la tabla / vista en Supabase</CardDescription>
+          <CardTitle>Desde actas / arbitrajes</CardTitle>
+          <CardDescription>
+            Si la vista de actas está disponible, se muestran esas filas; si no, la tabla arbitrajes.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -170,29 +207,51 @@ export function ArbitrajesPage() {
           ) : filtered.length === 0 ? (
             <EmptyState
               icon={DollarSign}
-              title="Sin arbitrajes"
-              description="No hay filas en arbitrajes para este torneo, o el filtro no coincide con ningún registro."
+              title="Sin datos"
+              description="No hay actas con detalle ni filas en arbitrajes que coincidan con el filtro."
             />
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {desdeActas.length > 0 && <TableHead className="w-[1%]">Acción</TableHead>}
                     {keys.map((k) => (
                       <TableHead key={k}>{k.replace(/_/g, ' ')}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((row, idx) => (
-                    <TableRow key={idx}>
-                      {keys.map((k) => {
-                        const v = (row as Record<string, unknown>)[k]
-                        const s = v == null ? '—' : typeof v === 'number' ? String(v) : String(v)
-                        return <TableCell key={k}>{s}</TableCell>
-                      })}
-                    </TableRow>
-                  ))}
+                  {filtered.map((row, idx) => {
+                    const r = row as Record<string, unknown>
+                    const partidoId = pickStr(r, 'partido_id')
+                    const tieneArbitraje = lista.some(
+                      (a) => pickStr(a as Record<string, unknown>, 'partido_id') === partidoId,
+                    )
+                    return (
+                      <TableRow key={idx}>
+                        {desdeActas.length > 0 && (
+                          <TableCell>
+                            {!tieneArbitraje && partidoId ? (
+                              <Button type="button" size="sm" variant="outline" onClick={() => void registrarArbitraje(row)}>
+                                <Plus className="mr-1 h-4 w-4" />
+                                Registrar
+                              </Button>
+                            ) : tieneArbitraje ? (
+                              <Badge variant="secondary">Registrado</Badge>
+                            ) : (
+                              '—'
+                            )}
+                          </TableCell>
+                        )}
+                        {keys.map((k) => {
+                          const v = r[k]
+                          const s = v == null ? '—' : typeof v === 'number' ? String(v) : String(v)
+                          return <TableCell key={k}>{s}</TableCell>
+                        })}
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -203,7 +262,7 @@ export function ArbitrajesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Tarifas por categoría</CardTitle>
-          <CardDescription>Desde tabla categorias (tarifa_arbitraje)</CardDescription>
+          <CardDescription>Se usan al crear un registro de arbitraje desde un partido con acta.</CardDescription>
         </CardHeader>
         <CardContent>
           {categorias.length === 0 ? (
@@ -235,4 +294,15 @@ export function ArbitrajesPage() {
       </Card>
     </div>
   )
+}
+
+function pickNumSafe(r: Record<string, unknown>, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = r[k]
+    if (v != null && v !== '') {
+      const n = Number(v)
+      if (!Number.isNaN(n)) return n
+    }
+  }
+  return 0
 }

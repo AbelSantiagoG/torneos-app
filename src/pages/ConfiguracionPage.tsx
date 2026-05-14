@@ -7,13 +7,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useTorneoActivo, torneoActivoQueryKey } from '@/features/torneos/useTorneoActivo'
 import { invalidateTorneoQueries, torneosListQueryKey } from '@/features/torneos/TorneoProvider'
 import { deleteTorneo, getTorneos, updateTorneo } from '@/features/torneos/torneosService'
-import { displayImagePresets, resolveDisplayImageUrl, uploadImage } from '@/features/uploads/uploadService'
+import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/uploadService'
+import { uploadImageAndRegister } from '@/features/media/mediaAssetsService'
+import { MediaAssetPicker } from '@/components/media/MediaAssetPicker'
+import { CrearTorneoDialog } from '@/components/torneos/CrearTorneoDialog'
+import { useAppTheme } from '@/features/theme/ThemeProvider'
 import { useCategorias } from '@/features/categorias/useCategorias'
 import { translateUserError } from '@/lib/errorMessages'
 import { formatCurrency } from '@/lib/utils'
 import { useCanchas } from '@/features/canchas/useCanchas'
-import { useHorarios } from '@/features/horarios/useHorarios'
-import { formatHoraUi } from '@/features/horarios/horariosService'
+import type { EstadoTorneo } from '@/types/database'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,7 +44,6 @@ import {
   Settings,
   Trophy,
   MapPin,
-  Clock,
   Users,
   DollarSign,
   Shield,
@@ -53,15 +55,25 @@ import {
   Trash2,
   Upload,
   Building,
+  List,
 } from 'lucide-react'
+
+const ESTADO_TORNEO_LABEL: Record<EstadoTorneo, string> = {
+  borrador: 'Borrador',
+  activo: 'Activo',
+  finalizado: 'Finalizado',
+  archivado: 'Archivado',
+}
 
 export function ConfiguracionPage() {
   const qc = useQueryClient()
   const logoFileRef = useRef<HTMLInputElement>(null)
-  const [darkMode, setDarkMode] = useState(false)
+  const { darkMode, setDarkMode } = useAppTheme()
+  const [configTab, setConfigTab] = useState('general')
   const [canchaDialogOpen, setCanchaDialogOpen] = useState(false)
-  const [horarioDialogOpen, setHorarioDialogOpen] = useState(false)
   const [usuarioDialogOpen, setUsuarioDialogOpen] = useState(false)
+  const [torneoLogoPickerOpen, setTorneoLogoPickerOpen] = useState(false)
+  const [crearTorneoOpen, setCrearTorneoOpen] = useState(false)
 
   const { data: torneo, isLoading: torneoLoading, torneos, setTorneoId } = useTorneoActivo()
   const torneoId = torneo?.id
@@ -108,7 +120,7 @@ export function ConfiguracionPage() {
       await qc.invalidateQueries({ queryKey: torneoActivoQueryKey })
       toast.success('Torneo actualizado')
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al guardar'),
+    onError: (e) => toast.error(translateUserError(e, 'torneo')),
   })
 
   const deleteTorneoMut = useMutation({
@@ -135,17 +147,7 @@ export function ConfiguracionPage() {
     isMutating: canchasMutating,
   } = useCanchas(torneoId)
 
-  const {
-    data: horarios = [],
-    isLoading: horariosLoading,
-    createHorario,
-    updateHorario,
-    deleteHorario,
-    isMutating: horariosMutating,
-  } = useHorarios(torneoId)
-
   const [canchaForm, setCanchaForm] = useState({ id: undefined as string | undefined, nombre: '', ubicacion: '', activa: true })
-  const [horarioForm, setHorarioForm] = useState({ id: undefined as string | undefined, hora: '', activo: true })
 
   const openNewCancha = () => {
     setCanchaForm({ id: undefined, nombre: '', ubicacion: '', activa: true })
@@ -205,51 +207,6 @@ export function ConfiguracionPage() {
     }
   }
 
-  const openNewHorario = () => {
-    setHorarioForm({ id: undefined, hora: '08:00', activo: true })
-    setHorarioDialogOpen(true)
-  }
-
-  const openEditHorario = (h: (typeof horarios)[number]) => {
-    setHorarioForm({ id: h.id, hora: formatHoraUi(h.hora), activo: h.activo })
-    setHorarioDialogOpen(true)
-  }
-
-  const saveHorario = async () => {
-    if (!torneoId) {
-      toast.error('No hay torneo activo')
-      return
-    }
-    if (!horarioForm.hora.trim()) {
-      toast.error('La hora es obligatoria')
-      return
-    }
-    try {
-      if (horarioForm.id) {
-        await updateHorario({
-          id: horarioForm.id,
-          data: { hora: horarioForm.hora, activo: horarioForm.activo },
-        })
-        toast.success('Horario actualizado')
-      } else {
-        await createHorario({ hora: horarioForm.hora, activo: horarioForm.activo })
-        toast.success('Horario creado')
-      }
-      setHorarioDialogOpen(false)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al guardar horario')
-    }
-  }
-
-  const removeHorario = async (id: string) => {
-    try {
-      await deleteHorario(id)
-      toast.success('Horario eliminado')
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'No se pudo eliminar')
-    }
-  }
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -257,19 +214,34 @@ export function ConfiguracionPage() {
         description="Administra la configuración general del torneo"
       />
 
-      <Tabs defaultValue="general" className="space-y-4">
+      <CrearTorneoDialog open={crearTorneoOpen} onOpenChange={setCrearTorneoOpen} />
+      <MediaAssetPicker
+        open={torneoLogoPickerOpen}
+        onOpenChange={setTorneoLogoPickerOpen}
+        torneoId={torneoId}
+        tipo="torneo_logo"
+        onSelect={(a) =>
+          setTorneoForm((f) => ({
+            ...f,
+            logo_url: a.secure_url,
+            logo_public_id: a.public_id,
+          }))
+        }
+      />
+
+      <Tabs value={configTab} onValueChange={setConfigTab} className="space-y-4">
         <TabsList className="flex-wrap h-auto gap-1">
           <TabsTrigger value="general" className="gap-2">
             <Settings className="h-4 w-4" />
             General
           </TabsTrigger>
+          <TabsTrigger value="torneos" className="gap-2">
+            <List className="h-4 w-4" />
+            Torneos
+          </TabsTrigger>
           <TabsTrigger value="canchas" className="gap-2">
             <MapPin className="h-4 w-4" />
             Canchas
-          </TabsTrigger>
-          <TabsTrigger value="horarios" className="gap-2">
-            <Clock className="h-4 w-4" />
-            Horarios
           </TabsTrigger>
           <TabsTrigger value="tarifas" className="gap-2">
             <DollarSign className="h-4 w-4" />
@@ -374,7 +346,7 @@ export function ConfiguracionPage() {
                         if (!file || !torneoId) return
                         void (async () => {
                           try {
-                            const up = await uploadImage(file, { torneoId, type: 'torneo_logo' })
+                            const up = await uploadImageAndRegister(file, { torneoId, type: 'torneo_logo' })
                             setTorneoForm((f) => ({
                               ...f,
                               logo_url: up.secure_url,
@@ -391,6 +363,16 @@ export function ConfiguracionPage() {
                       <Button type="button" variant="outline" size="sm" onClick={() => logoFileRef.current?.click()}>
                         <Upload className="mr-2 h-4 w-4" />
                         Subir logo (Cloudinary)
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!torneoId}
+                        onClick={() => setTorneoLogoPickerOpen(true)}
+                      >
+                        <List className="mr-2 h-4 w-4" />
+                        Biblioteca
                       </Button>
                       {resolveDisplayImageUrl(torneoForm.logo_public_id, torneoForm.logo_url, displayImagePresets.torneoLogo()) ? (
                         <img
@@ -460,6 +442,76 @@ export function ConfiguracionPage() {
                 Los datos de contacto públicos no están modelados en la tabla torneos; agrégalos en Supabase o en la
                 descripción del torneo.
               </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="torneos" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Torneos</CardTitle>
+                <CardDescription>
+                  Lista de torneos visibles para tu usuario. El activo se usa en toda la app; edita datos en la pestaña
+                  General.
+                </CardDescription>
+              </div>
+              <Button type="button" className="gap-2" onClick={() => setCrearTorneoOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Nuevo torneo
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {torneos.length === 0 ? (
+                <EmptyState
+                  icon={Trophy}
+                  title="Sin torneos"
+                  description="Crea un torneo para comenzar."
+                  action={
+                    <Button type="button" onClick={() => setCrearTorneoOpen(true)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Crear torneo
+                    </Button>
+                  }
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Organización</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {torneos.map((t) => (
+                      <TableRow key={t.id}>
+                        <TableCell className="font-medium">{t.nombre}</TableCell>
+                        <TableCell>{t.organizacion}</TableCell>
+                        <TableCell>
+                          <Badge variant={t.estado === 'activo' ? 'default' : 'secondary'}>
+                            {ESTADO_TORNEO_LABEL[t.estado as EstadoTorneo] ?? t.estado}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            type="button"
+                            variant={torneo?.id === t.id ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => {
+                              setTorneoId(t.id)
+                              setConfigTab('general')
+                            }}
+                          >
+                            {torneo?.id === t.id ? 'Torneo activo' : 'Activar'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -550,117 +602,6 @@ export function ConfiguracionPage() {
           </Card>
         </TabsContent>
 
-        {/* Horarios */}
-        <TabsContent value="horarios" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Horarios Predeterminados</CardTitle>
-                <CardDescription>
-                  Define los horarios disponibles para programar partidos
-                </CardDescription>
-              </div>
-              <Button onClick={openNewHorario} className="gap-2" disabled={!torneoId || horariosMutating}>
-                <Plus className="h-4 w-4" />
-                Nuevo Horario
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {!torneoId ? (
-                <EmptyState icon={Clock} title="Sin torneo" description="Activa un torneo para gestionar horarios." />
-              ) : horariosLoading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <Skeleton key={i} className="h-10 w-full" />
-                  ))}
-                </div>
-              ) : horarios.length === 0 ? (
-                <EmptyState
-                  icon={Clock}
-                  title="Sin horarios"
-                  description="Los horarios en la base son franjas horarias (hora del día) disponibles para programar."
-                  action={
-                    <Button onClick={openNewHorario}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Nuevo horario
-                    </Button>
-                  }
-                />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Hora</TableHead>
-                      <TableHead>Activo</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {horarios.map((horario) => (
-                      <TableRow key={horario.id}>
-                        <TableCell className="font-medium">{formatHoraUi(horario.hora)}</TableCell>
-                        <TableCell>
-                          <Badge variant={horario.activo ? 'default' : 'secondary'}>
-                            {horario.activo ? 'Sí' : 'No'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openEditHorario(horario)}
-                              disabled={horariosMutating}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive"
-                              onClick={() => void removeHorario(horario.id)}
-                              disabled={horariosMutating}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Categorías del torneo</CardTitle>
-              <CardDescription>Resumen desde Supabase; edita tarifas en la sección Categorías.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {categoriasLoading ? (
-                <Skeleton className="h-24 w-full" />
-              ) : categorias.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No hay categorías creadas.</p>
-              ) : (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {categorias.map((c) => (
-                    <div key={c.id} className="flex items-center justify-between rounded-lg border p-3">
-                      <span className="font-medium">{c.nombre}</span>
-                      <span className="text-right text-xs text-muted-foreground">
-                        Inscripción {formatCurrency(c.valorInscripcion)}
-                        <br />
-                        Arbitraje {formatCurrency(c.tarifaArbitraje)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* Tarifas */}
         <TabsContent value="tarifas" className="space-y-4">
           <Card>
@@ -694,6 +635,33 @@ export function ConfiguracionPage() {
                     ))}
                   </TableBody>
                 </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Categorías del torneo</CardTitle>
+              <CardDescription>Resumen de tarifas por categoría; edita formato y edad máxima en el módulo Categorías.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {categoriasLoading ? (
+                <Skeleton className="h-24 w-full" />
+              ) : categorias.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay categorías creadas.</p>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {categorias.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between rounded-lg border p-3">
+                      <span className="font-medium">{c.nombre}</span>
+                      <span className="text-right text-xs text-muted-foreground">
+                        Inscripción {formatCurrency(c.valorInscripcion)}
+                        <br />
+                        Arbitraje {formatCurrency(c.tarifaArbitraje)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>
@@ -749,26 +717,7 @@ export function ConfiguracionPage() {
                     </p>
                   </div>
                 </div>
-                <Switch checked={darkMode} onCheckedChange={setDarkMode} />
-              </div>
-
-              <div className="space-y-3">
-                <Label>Color Principal</Label>
-                <div className="flex gap-3">
-                  {[
-                    { name: 'Verde', color: 'bg-green-600' },
-                    { name: 'Azul', color: 'bg-blue-600' },
-                    { name: 'Índigo', color: 'bg-indigo-600' },
-                    { name: 'Púrpura', color: 'bg-purple-600' },
-                    { name: 'Rojo', color: 'bg-red-600' },
-                  ].map((c) => (
-                    <button
-                      key={c.name}
-                      className={`h-10 w-10 rounded-full ${c.color} ring-2 ring-offset-2 ring-transparent hover:ring-primary transition-all`}
-                      title={c.name}
-                    />
-                  ))}
-                </div>
+                <Switch checked={darkMode} onCheckedChange={(v) => setDarkMode(v)} />
               </div>
             </CardContent>
           </Card>
@@ -814,44 +763,6 @@ export function ConfiguracionPage() {
               Cancelar
             </Button>
             <Button onClick={() => void saveCancha()} disabled={canchasMutating}>
-              Guardar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog Nuevo Horario */}
-      <Dialog open={horarioDialogOpen} onOpenChange={setHorarioDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{horarioForm.id ? 'Editar horario' : 'Nuevo horario'}</DialogTitle>
-            <DialogDescription>
-              Franja horaria disponible (coincide con el campo <code className="text-xs">hora</code> en Supabase).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="horaFranja">Hora</Label>
-              <Input
-                id="horaFranja"
-                type="time"
-                value={horarioForm.hora}
-                onChange={(e) => setHorarioForm({ ...horarioForm, hora: e.target.value })}
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-lg border p-3">
-              <div>
-                <p className="text-sm font-medium">Activo</p>
-                <p className="text-xs text-muted-foreground">Se muestra en listas de programación</p>
-              </div>
-              <Switch checked={horarioForm.activo} onCheckedChange={(v) => setHorarioForm({ ...horarioForm, activo: v })} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setHorarioDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={() => void saveHorario()} disabled={horariosMutating}>
               Guardar
             </Button>
           </DialogFooter>

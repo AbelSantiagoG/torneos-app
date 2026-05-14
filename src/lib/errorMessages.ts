@@ -34,6 +34,23 @@ function combinedText(e: PgLike): string {
 
 /** Traduce errores de Supabase/Postgres/Cloudinary/RPC a texto legible. */
 export function translateUserError(error: unknown, context: UserErrorContext = 'default'): string {
+  const rawMsg = String((error as Error)?.message ?? '').trim()
+  if (rawMsg.includes('Ya existe un partido programado en esa cancha durante ese horario')) {
+    return 'Ya existe un partido programado en esa cancha durante ese horario.'
+  }
+  const rawMsgLower = rawMsg.toLowerCase()
+  if (
+    rawMsgLower.includes('failed to fetch') ||
+    rawMsgLower.includes('networkerror') ||
+    rawMsgLower.includes('network request failed') ||
+    rawMsgLower.includes('load failed')
+  ) {
+    return 'No se pudo conectar con Supabase. Revisa la URL del proyecto (VITE_SUPABASE_URL) y tu conexión.'
+  }
+  if (rawMsgLower.includes('cors')) {
+    return 'No se pudo conectar con Supabase. Revisa la URL del proyecto (debe ser solo https://….supabase.co, sin /rest/v1).'
+  }
+
   const e = asPg(error)
   const code = String(e.code ?? '')
   const text = combinedText(e)
@@ -66,7 +83,7 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
 
   if (code === '23514' || text.includes('check constraint')) {
     if (text.includes('edad') || text.includes('age')) {
-      return 'La edad del jugador no corresponde a la categoría seleccionada.'
+      return 'La edad del jugador no corresponde a la categoría.'
     }
     return 'Los datos no cumplen una regla de validación. Revisa edades, montos o valores permitidos.'
   }
@@ -96,7 +113,7 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
   }
 
   if (text.includes('violates') || text.includes('constraint') || text.includes('null value')) {
-    return 'No se pudo guardar la información. Verifica los datos e intenta nuevamente.'
+    return 'No se pudo guardar la información. Intenta nuevamente.'
   }
 
   const fallback = String(e.message ?? error ?? '').trim()
@@ -110,7 +127,7 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
     return fallback.length > 180 ? `${fallback.slice(0, 177)}…` : fallback
   }
 
-  return 'No se pudo guardar la información. Verifica los datos e intenta nuevamente.'
+  return 'No se pudo guardar la información. Intenta nuevamente.'
 }
 
 export function toFriendlyError(error: unknown, context?: UserErrorContext): Error {

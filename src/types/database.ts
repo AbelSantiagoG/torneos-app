@@ -102,3 +102,37 @@ export type HorarioRow = {
   activo: boolean
   created_at: string
 }
+
+export type MediaAssetTipoDb = 'torneo_logo' | 'equipo_logo' | 'jugador_foto'
+
+export type MediaAssetRow = {
+  id: string
+  torneo_id: string
+  tipo: MediaAssetTipoDb
+  secure_url: string
+  public_id: string
+  created_at?: string
+}
+
+/** Definición del resultado en actas_partido (Postgres enum o texto). */
+export type DefinicionPartidoDb =
+  | 'tiempo_reglamentario'
+  | 'tiempo_extra'
+  | 'penales'
+  | 'walkover'
+  | 'suspendido'
+
+export type RolPartidoJugadorDb = 'titular' | 'ingreso_cambio'
+
+export type TipoGolDb = 'normal' | 'penal' | 'autogol' | 'tiro_libre'
+
+export type TipoTarjetaActaDb = 'amarilla' | 'roja' | 'doble_amarilla'
+
+export type TipoFaseTorneoDb =
+  | 'todos_contra_todos'
+  | 'fase_grupos'
+  | 'cuadrangulares'
+  | 'eliminatoria_directa'
+  | 'final'
+  | 'tercer_puesto'
+  | 'amistoso'

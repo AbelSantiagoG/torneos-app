@@ -56,8 +56,9 @@ import { translateUserError } from '@/lib/errorMessages'
 import {
   displayImagePresets,
   resolveDisplayImageUrl,
-  uploadImage,
 } from '@/features/uploads/uploadService'
+import { uploadImageAndRegister } from '@/features/media/mediaAssetsService'
+import { MediaAssetPicker } from '@/components/media/MediaAssetPicker'
 import { PageHeader } from '@/components/common/PageHeader'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias, categoriasQueryKey } from '@/features/categorias/useCategorias'
@@ -115,7 +116,6 @@ export function EquiposPage() {
     nombre: '',
     sigla: '',
     color: '#dc2626',
-    categoriaId: '',
     observaciones: '',
     logoUrl: '' as string | null,
     logoPublicId: '' as string | null,
@@ -143,6 +143,8 @@ export function EquiposPage() {
     fotoPublicId: '' as string | null,
   })
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false)
+  const [teamMediaPickerOpen, setTeamMediaPickerOpen] = useState(false)
+  const [playerMediaPickerOpen, setPlayerMediaPickerOpen] = useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [transferTarget, setTransferTarget] = useState<{ jugadorId: string; nombre: string } | null>(null)
   const [transferEquipoId, setTransferEquipoId] = useState('')
@@ -165,7 +167,6 @@ export function EquiposPage() {
         nombre: equipo.nombre,
         sigla: equipo.sigla ?? '',
         color: equipo.color,
-        categoriaId: equipo.categoriaId,
         observaciones: equipo.observaciones ?? '',
         logoUrl: equipo.logoUrl ?? null,
         logoPublicId: equipo.logoPublicId ?? null,
@@ -176,7 +177,6 @@ export function EquiposPage() {
         nombre: '',
         sigla: '',
         color: '#dc2626',
-        categoriaId: selectedCategoria,
         observaciones: '',
         logoUrl: null,
         logoPublicId: null,
@@ -194,7 +194,7 @@ export function EquiposPage() {
       toast.error('El nombre del equipo es obligatorio')
       return
     }
-    const catId = teamForm.categoriaId || selectedCategoria
+    const catId = editingEquipo?.categoriaId ?? selectedCategoria
     if (!catId) {
       toast.error('Selecciona una categoría')
       return
@@ -548,26 +548,11 @@ export function EquiposPage() {
                       onChange={(e) => setTeamForm({ ...teamForm, nombre: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Categoría</Label>
-                    <Select
-                      value={teamForm.categoriaId}
-                      onValueChange={(v) => setTeamForm({ ...teamForm, categoriaId: v })}
-                      disabled={Boolean(editingEquipo)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Categoría" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categorias
-                          .filter((c) => c.activa)
-                          .map((cat) => (
-                            <SelectItem key={cat.id} value={cat.id}>
-                              {cat.nombre} ({cat.rangoEdad})
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">Categoría: </span>
+                    <span className="font-medium">
+                      {categorias.find((c) => c.id === (editingEquipo?.categoriaId ?? selectedCategoria))?.nombre ?? '—'}
+                    </span>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -624,7 +609,7 @@ export function EquiposPage() {
                               toast.error('No hay torneo activo')
                               return
                             }
-                            const up = await uploadImage(f, { torneoId, type: 'equipo_logo' })
+                            const up = await uploadImageAndRegister(f, { torneoId, type: 'equipo_logo' })
                             setTeamForm((prev) => ({
                               ...prev,
                               logoUrl: up.secure_url,
@@ -640,6 +625,9 @@ export function EquiposPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <Button type="button" variant="outline" size="sm" onClick={() => teamLogoInputRef.current?.click()}>
                         Subir imagen
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setTeamMediaPickerOpen(true)}>
+                        Biblioteca
                       </Button>
                       {resolveDisplayImageUrl(teamForm.logoPublicId, teamForm.logoUrl, displayImagePresets.equipoLogo()) ? (
                         <img
@@ -1058,7 +1046,7 @@ export function EquiposPage() {
                               toast.error('No hay torneo activo')
                               return
                             }
-                            const up = await uploadImage(f, { torneoId, type: 'jugador_foto' })
+                            const up = await uploadImageAndRegister(f, { torneoId, type: 'jugador_foto' })
                             setPlayerForm((prev) => ({
                               ...prev,
                               fotoUrl: up.secure_url,
@@ -1074,6 +1062,9 @@ export function EquiposPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <Button type="button" variant="outline" size="sm" onClick={() => playerFotoInputRef.current?.click()}>
                         Subir foto
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setPlayerMediaPickerOpen(true)}>
+                        Biblioteca
                       </Button>
                       {resolveDisplayImageUrl(playerForm.fotoPublicId, playerForm.fotoUrl, displayImagePresets.jugadorFoto()) ? (
                         <img
@@ -1222,6 +1213,32 @@ export function EquiposPage() {
           </div>
         </SheetContent>
       </Sheet>
+      <MediaAssetPicker
+        open={teamMediaPickerOpen}
+        onOpenChange={setTeamMediaPickerOpen}
+        torneoId={torneoId}
+        tipo="equipo_logo"
+        onSelect={(a) =>
+          setTeamForm((prev) => ({
+            ...prev,
+            logoUrl: a.secure_url,
+            logoPublicId: a.public_id,
+          }))
+        }
+      />
+      <MediaAssetPicker
+        open={playerMediaPickerOpen}
+        onOpenChange={setPlayerMediaPickerOpen}
+        torneoId={torneoId}
+        tipo="jugador_foto"
+        onSelect={(a) =>
+          setPlayerForm((prev) => ({
+            ...prev,
+            fotoUrl: a.secure_url,
+            fotoPublicId: a.public_id,
+          }))
+        }
+      />
     </div>
   )
 }

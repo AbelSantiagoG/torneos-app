@@ -3,18 +3,18 @@ export function edadDesdeAnioNacimiento(anioNacimiento: number, referenciaAnio =
   return referenciaAnio - anioNacimiento
 }
 
+/**
+ * Valida que la edad del jugador no supere la edad máxima de la categoría (ej. Sub-5 → edad_max 5).
+ * No se usa edad_min en la app.
+ */
 export function validarEdadCategoria(
   anioNacimiento: number,
-  edadMin: number | null,
-  edadMax: number | null,
+  edadMax: number | null | undefined,
   referenciaAnio = new Date().getFullYear(),
 ): string | null {
   const edad = edadDesdeAnioNacimiento(anioNacimiento, referenciaAnio)
   if (edadMax != null && edad > edadMax) {
-    return 'La edad del jugador no corresponde a la categoría seleccionada.'
-  }
-  if (edadMin != null && edad < edadMin) {
-    return 'La edad del jugador no corresponde a la categoría seleccionada.'
+    return 'La edad del jugador no corresponde a la categoría.'
   }
   return null
 }

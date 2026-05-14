@@ -29,10 +29,12 @@ import { useEstadisticas } from '@/features/estadisticas/useEstadisticas'
 import { getDashboardCounts } from '@/features/dashboard/dashboardService'
 import {
   filterVistaRowsPorCategoria,
+  filterVistaRowsPorFase,
   formatVistaCell,
   rowKeysForTable,
   type VistaRow,
 } from '@/features/estadisticas/estadisticasService'
+import { listFasesPorCategoria } from '@/features/fases/fasesTorneoService'
 import { pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
 
 function pickNombreEquipo(row: VistaRow): string {
@@ -49,6 +51,7 @@ function pickNombreJugador(row: VistaRow): string {
 
 export function EstadisticasPage() {
   const [selectedCategoria, setSelectedCategoria] = useState('')
+  const [selectedFase, setSelectedFase] = useState('')
   const [activeTab, setActiveTab] = useState('posiciones')
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
@@ -67,21 +70,43 @@ export function EstadisticasPage() {
     if (categorias.length && !selectedCategoria) setSelectedCategoria(categorias[0]!.id)
   }, [categorias, selectedCategoria])
 
+  const { data: fasesList = [] } = useQuery({
+    queryKey: ['estadisticas-fases', selectedCategoria],
+    enabled: Boolean(selectedCategoria),
+    queryFn: () => listFasesPorCategoria(selectedCategoria),
+  })
+
+  useEffect(() => {
+    setSelectedFase('')
+  }, [selectedCategoria])
+
   useEffect(() => {
     if (statsError) toast.error(statsError instanceof Error ? statsError.message : 'Error al cargar estadísticas')
   }, [statsError])
 
   const tabla = useMemo(
-    () => filterVistaRowsPorCategoria(statsData?.tabla ?? [], selectedCategoria),
-    [statsData?.tabla, selectedCategoria],
+    () =>
+      filterVistaRowsPorFase(
+        filterVistaRowsPorCategoria(statsData?.tabla ?? [], selectedCategoria),
+        selectedFase,
+      ),
+    [statsData?.tabla, selectedCategoria, selectedFase],
   )
   const goleadores = useMemo(
-    () => filterVistaRowsPorCategoria(statsData?.goleadores ?? [], selectedCategoria),
-    [statsData?.goleadores, selectedCategoria],
+    () =>
+      filterVistaRowsPorFase(
+        filterVistaRowsPorCategoria(statsData?.goleadores ?? [], selectedCategoria),
+        selectedFase,
+      ),
+    [statsData?.goleadores, selectedCategoria, selectedFase],
   )
   const disciplina = useMemo(
-    () => filterVistaRowsPorCategoria(statsData?.disciplina ?? [], selectedCategoria),
-    [statsData?.disciplina, selectedCategoria],
+    () =>
+      filterVistaRowsPorFase(
+        filterVistaRowsPorCategoria(statsData?.disciplina ?? [], selectedCategoria),
+        selectedFase,
+      ),
+    [statsData?.disciplina, selectedCategoria, selectedFase],
   )
 
   const tablaKeys = useMemo(() => rowKeysForTable(tabla), [tabla])
@@ -136,12 +161,13 @@ export function EstadisticasPage() {
               <TabsTrigger value="disciplina">Disciplina</TabsTrigger>
             </TabsList>
 
-            <Select value={selectedCategoria} onValueChange={setSelectedCategoria}>
-              <SelectTrigger className="w-full md:w-48">
-                <SelectValue placeholder="Categoría" />
-              </SelectTrigger>
-              <SelectContent>
-                {categorias.map((cat) => (
+            <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
+              <Select value={selectedCategoria} onValueChange={setSelectedCategoria}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue placeholder="Categoría" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categorias.map((cat) => (
                     <SelectItem key={cat.id} value={cat.id}>
                       <div className="flex items-center gap-2">
                         <div className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
@@ -149,8 +175,22 @@ export function EstadisticasPage() {
                       </div>
                     </SelectItem>
                   ))}
-              </SelectContent>
-            </Select>
+                </SelectContent>
+              </Select>
+              <Select value={selectedFase || '__all__'} onValueChange={(v) => setSelectedFase(v === '__all__' ? '' : v)}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue placeholder="Fase" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todas las fases</SelectItem>
+                  {fasesList.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <TabsContent value="posiciones" className="space-y-4">

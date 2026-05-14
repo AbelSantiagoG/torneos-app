@@ -3,12 +3,22 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrlRaw = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-if (import.meta.env.DEV) {
-  console.log('Supabase URL:', supabaseUrlRaw)
-}
-
 if (!supabaseUrlRaw) {
   throw new Error('Missing VITE_SUPABASE_URL')
+}
+
+const rawTrim = String(supabaseUrlRaw).trim()
+if (/\/rest\/v1/i.test(rawTrim)) {
+  console.error(
+    '[supabase] VITE_SUPABASE_URL no debe incluir /rest/v1. Usa solo la raíz del proyecto, por ejemplo:\n' +
+      '  VITE_SUPABASE_URL=https://TU_PROJECT_REF.supabase.co\n' +
+      'Si dejas /rest/v1 en la URL, el cliente apunta mal y aparecen errores tipo "failed to fetch" o CORS al consultar tablas.',
+  )
+}
+if (/\/auth\/v1/i.test(rawTrim)) {
+  console.error(
+    '[supabase] VITE_SUPABASE_URL no debe incluir /auth/v1. Usa solo https://TU_PROJECT_REF.supabase.co',
+  )
 }
 
 if (!supabaseAnonKey) {
@@ -23,11 +33,9 @@ if (!supabaseAnonKey) {
 function normalizeSupabaseProjectUrl(url: string): string {
   let u = String(url).trim().replace(/\/+$/, '')
   if (/\/rest\/v1/i.test(u)) {
-    console.warn('[supabase] VITE_SUPABASE_URL contenía /rest/v1; se usó solo la raíz del proyecto.')
     u = u.replace(/\/rest\/v1.*$/i, '')
   }
   if (/\/auth\/v1/i.test(u)) {
-    console.warn('[supabase] VITE_SUPABASE_URL contenía /auth/v1; se usó solo la raíz del proyecto.')
     u = u.replace(/\/auth\/v1.*$/i, '')
   }
   return u.replace(/\/+$/, '')

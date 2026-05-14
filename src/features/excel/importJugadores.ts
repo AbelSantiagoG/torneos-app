@@ -2,8 +2,9 @@ import { getCategoriaById } from '@/features/categorias/categoriasService'
 import { getEquipoById } from '@/features/equipos/equiposService'
 import { createJugadorConEquipo } from '@/features/jugadores/jugadoresService'
 import { pickCell } from '@/features/excel/parseSheet'
-import { validarEdadCategoria } from '@/lib/jugadorEdad'
 import { translateUserError } from '@/lib/errorMessages'
+import { validarEdadCategoria } from '@/lib/jugadorEdad'
+import { parseDateFlexible } from '@/lib/parseDateFlexible'
 
 export type ImportJugadoresResult = {
   creados: number
@@ -25,7 +26,6 @@ export async function importJugadoresFromRows(
   }
 
   const categoria = await getCategoriaById(equipo.categoria_id)
-  const edadMin = categoria?.edad_min ?? null
   const edadMax = categoria?.edad_max ?? null
 
   const docsEnArchivo = new Set<string>()
@@ -36,9 +36,10 @@ export async function importJugadoresFromRows(
     const nombreCompleto = pickCell(row, 'nombre_completo', 'nombre', 'jugador', 'full_name', 'nombres')
     const documento = pickCell(row, 'documento', 'doc', 'cedula', 'dni', 'id')
     const anioStr = pickCell(row, 'anio_nacimiento', 'año_nacimiento', 'ano_nacimiento', 'año', 'anio', 'year')
-    const fechaNac = pickCell(row, 'fecha_nacimiento', 'fecha nacimiento', 'birthdate')
-    if (fechaNac.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(fechaNac.trim())) {
-      errores.push({ fila, mensaje: 'fecha_nacimiento debe tener formato YYYY-MM-DD.' })
+    const fechaNacRaw = pickCell(row, 'fecha_nacimiento', 'fecha nacimiento', 'birthdate')
+    const fechaIso = parseDateFlexible(fechaNacRaw)
+    if (fechaNacRaw.trim() && !fechaIso) {
+      errores.push({ fila, mensaje: 'fecha_nacimiento no reconocida. Usa YYYY-MM-DD o DD/MM/YYYY.' })
       continue
     }
     const fotoUrl = pickCell(row, 'foto_url', 'foto', 'imagen', 'url_foto')
@@ -65,7 +66,7 @@ export async function importJugadoresFromRows(
     }
     docsEnArchivo.add(docKey)
 
-    const edadMsg = validarEdadCategoria(anio, edadMin, edadMax)
+    const edadMsg = validarEdadCategoria(anio, edadMax)
     if (edadMsg) {
       errores.push({ fila, mensaje: edadMsg })
       continue
@@ -77,7 +78,7 @@ export async function importJugadoresFromRows(
           nombre_completo: nombreCompleto,
           documento,
           anio_nacimiento: anio,
-          fecha_nacimiento: fechaNac || null,
+          fecha_nacimiento: fechaIso,
           observaciones: observaciones || null,
           foto_url: fotoUrl?.trim() || null,
           foto_public_id: null,

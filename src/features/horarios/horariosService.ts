@@ -64,3 +64,19 @@ export async function deleteHorario(id: string): Promise<void> {
     throw new Error(result.error.message)
   }
 }
+
+/** Franjas sugeridas si no hay filas en la tabla `horarios` (sorteo / borrador). */
+export const HORA_FRANJAS_PREDETERMINADAS: { hora: string }[] = [
+  '08:00',
+  '09:00',
+  '10:00',
+  '11:00',
+  '12:00',
+  '14:00',
+  '15:00',
+  '16:00',
+  '17:00',
+  '18:00',
+  '19:00',
+  '20:00',
+].map((h) => ({ hora: normalizeHoraDb(h) }))

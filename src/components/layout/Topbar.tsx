@@ -24,9 +24,10 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { CrearTorneoDialog } from '@/components/torneos/CrearTorneoDialog'
+import { useAppTheme } from '@/features/theme/ThemeProvider'
+import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/uploadService'
 
 interface TopbarProps {
-  darkMode: boolean
   onToggleDarkMode: () => void
 }
 
@@ -38,14 +39,20 @@ function initialsFromEmail(email: string | undefined): string {
   return local.slice(0, 2).toUpperCase()
 }
 
-export function Topbar({ darkMode, onToggleDarkMode }: TopbarProps) {
+export function Topbar({ onToggleDarkMode }: TopbarProps) {
   const navigate = useNavigate()
   const { signOut, user } = useAuth()
   const { data: torneo, isLoading: torneoLoading, torneos, selectedTorneoId, setTorneoId } = useTorneoActivo()
+  const { darkMode } = useAppTheme()
   const [crearTorneoOpen, setCrearTorneoOpen] = useState(false)
 
   const nombreTorneo = torneo?.nombre ?? (torneoLoading ? 'Cargando…' : 'Sin torneo')
   const organizacion = torneo?.organizacion ?? ''
+  const logoSrc = resolveDisplayImageUrl(
+    torneo?.logo_public_id,
+    torneo?.logo_url,
+    displayImagePresets.torneoLogo(),
+  )
 
   const handleLogout = async () => {
     try {
@@ -65,9 +72,18 @@ export function Topbar({ darkMode, onToggleDarkMode }: TopbarProps) {
       <CrearTorneoDialog open={crearTorneoOpen} onOpenChange={setCrearTorneoOpen} />
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-card px-6">
         <div className="flex min-w-0 flex-1 items-center gap-4 md:gap-6">
-          <div className="min-w-0 shrink">
-            <h1 className="truncate text-lg font-semibold text-foreground">{nombreTorneo}</h1>
-            <p className="truncate text-xs text-muted-foreground">{organizacion || '—'}</p>
+          <div className="flex min-w-0 shrink items-center gap-3">
+            {logoSrc ? (
+              <img src={logoSrc} alt="" className="h-10 w-10 shrink-0 rounded-lg border object-cover" />
+            ) : (
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-xs font-bold text-primary">
+                {nombreTorneo.slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0">
+              <h1 className="truncate text-lg font-semibold text-foreground">{nombreTorneo}</h1>
+              <p className="truncate text-xs text-muted-foreground">{organizacion || '—'}</p>
+            </div>
           </div>
 
           <div className="hidden min-w-0 flex-1 items-center gap-2 md:flex">

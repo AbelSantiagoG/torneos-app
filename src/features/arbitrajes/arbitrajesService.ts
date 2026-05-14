@@ -51,3 +51,26 @@ export async function fetchResumenArbitrajes(torneoId: string): Promise<ResumenA
 
   return { totalPartidos: 0, totalPagado: 0, totalPendiente: 0 }
 }
+
+/** Filas desde actas (vista detalle) para liquidación de arbitraje. */
+export async function fetchLiquidacionesArbitrajeDesdeActas(torneoId: string): Promise<ArbitrajeRowUi[]> {
+  const r = await supabase.from('vw_actas_partido_detalle').select('*').eq('torneo_id', torneoId)
+  if (r.error || !r.data?.length) return []
+  return r.data as ArbitrajeRowUi[]
+}
+
+export async function crearArbitrajeSiNoExiste(input: {
+  torneo_id: string
+  partido_id: string
+  valor: number
+}): Promise<void> {
+  const ex = await supabase.from('arbitrajes').select('id').eq('partido_id', input.partido_id).maybeSingle()
+  if (ex.data) return
+  const ins = await supabase.from('arbitrajes').insert({
+    torneo_id: input.torneo_id,
+    partido_id: input.partido_id,
+    valor: input.valor,
+    estado_pago: 'pendiente',
+  })
+  if (ins.error) throw new Error(ins.error.message)
+}

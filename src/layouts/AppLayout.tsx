@@ -3,10 +3,11 @@ import { Outlet } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
+import { useAppTheme } from '@/features/theme/ThemeProvider'
 
 export function AppLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [darkMode, setDarkMode] = useState(false)
+  const { darkMode, toggleDarkMode } = useAppTheme()
 
   return (
     <div className={cn('min-h-screen bg-background', darkMode && 'dark')}>
@@ -18,7 +19,7 @@ export function AppLayout() {
           sidebarCollapsed ? 'ml-16' : 'ml-64',
         )}
       >
-        <Topbar darkMode={darkMode} onToggleDarkMode={() => setDarkMode((v) => !v)} />
+        <Topbar onToggleDarkMode={toggleDarkMode} />
 
         <main className="p-6">
           <Outlet />

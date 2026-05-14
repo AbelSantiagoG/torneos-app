@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { throwOnError } from '@/features/_shared/supabaseHelpers'
 import { toUserError } from '@/lib/supabaseErrors'
-import { formatHoraUi, normalizeHoraDb } from '@/features/horarios/horariosService'
+import { formatHoraUi, HORA_FRANJAS_PREDETERMINADAS, normalizeHoraDb } from '@/features/horarios/horariosService'
 import { mapVwPartidoRow, type PartidoDashboardUi } from '@/features/partidos/partidosUi'
 
 export { deletePartidoCascade } from '@/features/partidos/partidoCleanup'
@@ -23,6 +23,7 @@ type PartidoRowDb = {
   estado: string
   equipo_local_id: string
   equipo_visitante_id: string
+  fase_torneo_id?: string | null
 }
 
 function addMinutesToTime(hora: string, mins: number): string {
@@ -45,7 +46,7 @@ export async function listPartidosFixtureTorneo(
   const p = await supabase
     .from('partidos')
     .select(
-      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id',
+      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id',
     )
     .eq('torneo_id', torneoId)
     .order('categoria_id', { ascending: true })
@@ -111,6 +112,7 @@ export async function listPartidosFixtureTorneo(
       jornada: x.jornada ?? 0,
       orden: x.orden ?? 0,
       programacionId: null,
+      faseTorneoId: x.fase_torneo_id ?? null,
     }
   })
 }
@@ -130,7 +132,9 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
   const pidSet = new Set(prows.map((r) => String(r.partido_id ?? '')))
   const partidosRes = await supabase
     .from('partidos')
-    .select('id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id')
+    .select(
+      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id',
+    )
     .in('id', [...pidSet])
   const partRows = throwOnError(partidosRes) as PartidoRowDb[]
   const partMap = new Map(partRows.map((pr) => [pr.id, pr]))
@@ -182,6 +186,7 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
     const hf = String(r.hora_fin ?? '')
     const canchaId = String(r.cancha_id ?? '')
     const canchaNombre = canchaMap.get(canchaId) ?? '—'
+    const observaciones = r.observaciones != null ? String(r.observaciones) : null
     out.push({
       id: pr.id,
       programacionId: String(r.id ?? ''),
@@ -206,24 +211,32 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
       equipoVisitanteId: pr.equipo_visitante_id,
       jornada: pr.jornada ?? 0,
       orden: pr.orden ?? 0,
+      observaciones,
+      faseTorneoId: pr.fase_torneo_id ?? null,
     })
   }
 
   const idsOut = out.map((o) => o.id)
   if (idsOut.length) {
-    const golRes = await supabase.from('goles').select('partido_id, equipo_id').in('partido_id', idsOut)
+    const golRes = await supabase.from('goles').select('partido_id, equipo_id, tipo_gol').in('partido_id', idsOut)
     if (!golRes.error && golRes.data?.length) {
       const byPartido = new Map<string, { l: number; v: number }>()
       for (const o of out) {
         const pr = partMap.get(o.id)
         if (pr) byPartido.set(o.id, { l: 0, v: 0 })
       }
-      for (const g of golRes.data as { partido_id: string; equipo_id: string }[]) {
+      for (const g of golRes.data as { partido_id: string; equipo_id: string; tipo_gol?: string | null }[]) {
         const pr = partMap.get(g.partido_id)
         if (!pr) continue
         const cur = byPartido.get(g.partido_id) ?? { l: 0, v: 0 }
-        if (g.equipo_id === pr.equipo_local_id) cur.l++
-        else if (g.equipo_id === pr.equipo_visitante_id) cur.v++
+        const tipo = (g.tipo_gol ?? 'normal').toLowerCase()
+        if (tipo === 'autogol') {
+          if (g.equipo_id === pr.equipo_local_id) cur.v++
+          else if (g.equipo_id === pr.equipo_visitante_id) cur.l++
+        } else {
+          if (g.equipo_id === pr.equipo_local_id) cur.l++
+          else if (g.equipo_id === pr.equipo_visitante_id) cur.v++
+        }
         byPartido.set(g.partido_id, cur)
       }
       for (const o of out) {
@@ -240,10 +253,26 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
 }
 
 export async function loadPartidosTorneoBundle(torneoId: string): Promise<PartidosTorneoBundle> {
-  const [fixture, programados] = await Promise.all([
+  const [fixtureRaw, programados] = await Promise.all([
     listPartidosFixtureTorneo(torneoId),
     listPartidosProgramadosTorneo(torneoId),
   ])
+  const progByPartido = new Map(programados.map((p) => [p.id, p]))
+  const fixture = fixtureRaw.map((f) => {
+    const pr = progByPartido.get(f.id)
+    if (!pr) return f
+    return {
+      ...f,
+      programacionId: pr.programacionId ?? null,
+      fecha: pr.fecha || f.fecha,
+      hora: pr.hora || '',
+      horaFin: pr.horaFin ?? '',
+      cancha: pr.cancha || '',
+      canchaId: pr.canchaId ?? null,
+      observaciones: pr.observaciones ?? null,
+      estadoProgramacion: pr.estado,
+    }
+  })
   return { fixture, programados }
 }
 
@@ -297,10 +326,12 @@ export async function countPartidosEnCategoria(categoriaId: string): Promise<num
   return r.count ?? 0
 }
 
-export async function generarFixtureCategoria(categoriaId: string, fechaInicio: string): Promise<void> {
+export async function generarFixtureCategoria(categoriaId: string, _fechaInicioLegacy?: string | null): Promise<void> {
   const variants: Record<string, unknown>[] = [
-    { p_categoria_id: categoriaId, p_fecha_inicio: fechaInicio },
-    { categoria_id: categoriaId, fecha_inicio: fechaInicio },
+    { p_categoria_id: categoriaId },
+    { categoria_id: categoriaId },
+    { p_categoria_id: categoriaId, p_fecha_inicio: null },
+    { categoria_id: categoriaId, fecha_inicio: null },
   ]
   let last: unknown = null
   for (const args of variants) {
@@ -356,6 +387,7 @@ export type PartidoInsertInput = {
   jornada?: number | null
   fecha_fixture?: string | null
   orden?: number | null
+  fase_torneo_id?: string | null
 }
 
 export async function createPartidoManual(input: PartidoInsertInput): Promise<string> {
@@ -388,6 +420,7 @@ export async function createPartidoManual(input: PartidoInsertInput): Promise<st
       estado: 'pendiente_programar',
       fase: 'regular',
       orden,
+      fase_torneo_id: input.fase_torneo_id ?? null,
     })
     .select('id')
     .single()
@@ -401,6 +434,19 @@ export type ProgramacionInput = {
   fecha: string
   hora_inicio: string
   hora_fin?: string
+  estado?: string
+  observaciones?: string | null
+}
+
+async function resolveProgramacionIdForPartido(
+  partidoId: string,
+  programacionId: string | null | undefined,
+): Promise<string | null> {
+  if (programacionId) return programacionId
+  const r = await supabase.from('programaciones_partido').select('id').eq('partido_id', partidoId).maybeSingle()
+  if (r.error) throw toUserError(r.error, 'programacion')
+  const id = (r.data as { id?: string } | null)?.id
+  return id ? String(id) : null
 }
 
 export async function upsertProgramacion(
@@ -410,14 +456,19 @@ export async function upsertProgramacion(
   const horaInicio = normalizeHoraDb(input.hora_inicio)
   const horaFin = normalizeHoraDb(input.hora_fin ?? addMinutesToTime(horaInicio, 90))
 
+  const resolvedId = await resolveProgramacionIdForPartido(input.partido_id, programacionId)
+
   await assertSlotProgramacionLibre({
     cancha_id: input.cancha_id,
     fecha: input.fecha,
     hora_inicio_db: horaInicio,
-    excluirProgramacionId: programacionId,
+    excluirProgramacionId: resolvedId,
   })
 
-  if (programacionId) {
+  const estadoProg = (input.estado ?? 'programado').trim() || 'programado'
+  const obs = input.observaciones?.trim() ? input.observaciones!.trim() : null
+
+  if (resolvedId) {
     const r = await supabase
       .from('programaciones_partido')
       .update({
@@ -425,8 +476,10 @@ export async function upsertProgramacion(
         fecha: input.fecha,
         hora_inicio: horaInicio,
         hora_fin: horaFin,
+        estado: estadoProg,
+        observaciones: obs,
       })
-      .eq('id', programacionId)
+      .eq('id', resolvedId)
     if (r.error) throw toUserError(r.error, 'programacion')
     return
   }
@@ -437,7 +490,8 @@ export async function upsertProgramacion(
     fecha: input.fecha,
     hora_inicio: horaInicio,
     hora_fin: horaFin,
-    estado: 'programado',
+    estado: estadoProg,
+    observaciones: obs,
   })
   if (r.error) throw toUserError(r.error, 'programacion')
 }
@@ -462,7 +516,7 @@ function hayCruce(
   return ocupadas.some((o) => o.fecha === fecha && o.canchaId === canchaId && o.hora === hora)
 }
 
-export type SorteoBorradorSlot = { fecha: string; canchaId: string; hora: string }
+export type SorteoBorradorSlot = { fecha: string; canchaId: string; hora: string; horaFin?: string }
 
 /** Propone fecha/cancha/hora por partido sin escribir en la base de datos (borrador para revisar antes de guardar). */
 export function generarBorradorSorteo(opts: {
@@ -474,7 +528,8 @@ export function generarBorradorSorteo(opts: {
   dias: number
 }): Record<string, SorteoBorradorSlot> {
   const out: Record<string, SorteoBorradorSlot> = {}
-  if (!opts.canchas.length || !opts.horarios.length || !opts.pendientes.length) return out
+  const horas = opts.horarios.length ? opts.horarios : HORA_FRANJAS_PREDETERMINADAS
+  if (!opts.canchas.length || !horas.length || !opts.pendientes.length) return out
 
   const ocupadas = opts.programados
     .filter((p) => p.canchaId && p.fecha && p.hora)
@@ -487,13 +542,15 @@ export function generarBorradorSorteo(opts: {
     for (let d = 0; d < opts.dias && !colocado; d++) {
       const fecha = addDaysToIsoDate(opts.fechaInicio, d)
       const ordenCanchas = [...opts.canchas].sort(() => Math.random() - 0.5)
-      const ordenHoras = [...opts.horarios].sort(() => Math.random() - 0.5)
+      const ordenHoras = [...horas].sort(() => Math.random() - 0.5)
       for (const c of ordenCanchas) {
         for (const h of ordenHoras) {
-          const hora = formatHoraUi(normalizeHoraDb(String(h.hora)))
+          const horaDb = normalizeHoraDb(String(h.hora))
+          const hora = formatHoraUi(horaDb)
+          const horaFin = formatHoraUi(addMinutesToTime(horaDb, 90))
           if (hayCruce(ocupadas, fecha, c.id, hora)) continue
           ocupadas.push({ fecha, canchaId: c.id, hora })
-          out[p.id] = { fecha, canchaId: c.id, hora }
+          out[p.id] = { fecha, canchaId: c.id, hora, horaFin }
           colocado = true
           break
         }
@@ -502,7 +559,7 @@ export function generarBorradorSorteo(opts: {
     }
     if (!colocado) {
       throw new Error(
-        'No hay suficientes combinaciones de fecha, cancha y hora sin cruce. Amplía el rango de días o revisa horarios en Configuración.',
+        'No hay suficientes combinaciones de fecha, cancha y hora sin cruce. Amplía el rango de días o revisa las canchas.',
       )
     }
   }
@@ -517,15 +574,13 @@ export async function sorteoProgramacionesTorneoCategoria(
   const canchas = throwOnError(
     await supabase.from('canchas').select('id').eq('torneo_id', torneoId).eq('activa', true),
   ) as { id: string }[]
-  const horarios = throwOnError(
+  const horariosDb = throwOnError(
     await supabase.from('horarios').select('hora').eq('torneo_id', torneoId).eq('activo', true),
   ) as { hora: string }[]
+  const horarios = horariosDb.length ? horariosDb : HORA_FRANJAS_PREDETERMINADAS
 
   if (!canchas.length) {
     throw new Error('Agrega al menos una cancha activa en Configuración antes de sortear horarios.')
-  }
-  if (!horarios.length) {
-    throw new Error('Agrega al menos un horario en Configuración antes de sortear.')
   }
 
   const fixture = await listPartidosFixtureTorneo(torneoId, categoriaId)
@@ -556,6 +611,7 @@ export async function sorteoProgramacionesTorneoCategoria(
             cancha_id: c.id,
             fecha,
             hora_inicio: hora,
+            hora_fin: formatHoraUi(addMinutesToTime(normalizeHoraDb(String(h.hora)), 90)),
           })
           ocupadas.push({ fecha, canchaId: c.id, hora })
           creadas++
@@ -567,7 +623,7 @@ export async function sorteoProgramacionesTorneoCategoria(
     }
     if (!colocado) {
       throw new Error(
-        'No hay suficientes combinaciones de fecha, cancha y hora sin cruce. Amplía el rango de días o revisa horarios en Configuración.',
+        'No hay suficientes combinaciones de fecha, cancha y hora sin cruce. Amplía el rango de días o revisa las canchas.',
       )
     }
   }
