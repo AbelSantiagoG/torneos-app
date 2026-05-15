@@ -53,6 +53,7 @@ import {
 } from '@/features/excel/plantillasImportacion'
 import { downloadPlantillaEquiposXlsx, downloadPlantillaJugadoresXlsx } from '@/features/excel/xlsxTemplates'
 import { translateUserError } from '@/lib/errorMessages'
+import { edadDesdeAnio, onFechaNacimientoChange, resolverAnioNacimiento } from '@/lib/jugadorFecha'
 import {
   displayImagePresets,
   resolveDisplayImageUrl,
@@ -122,6 +123,7 @@ export function EquiposPage() {
   })
 
   const [isPlayersSheetOpen, setIsPlayersSheetOpen] = useState(false)
+  const [playerSearch, setPlayerSearch] = useState('')
   const [selectedEquipo, setSelectedEquipo] = useState<Equipo | null>(null)
 
   const {
@@ -132,6 +134,14 @@ export function EquiposPage() {
     eliminarJugador,
     isMutating: jugMutating,
   } = useJugadores(selectedEquipo?.id, selectedCategoria || undefined)
+
+  const jugadoresEquipoFiltrados = useMemo(() => {
+    const t = playerSearch.trim().toLowerCase()
+    if (!t) return jugadoresEquipo
+    return jugadoresEquipo.filter(
+      (j) => j.nombre.toLowerCase().includes(t) || String(j.documento ?? '').toLowerCase().includes(t),
+    )
+  }, [jugadoresEquipo, playerSearch])
 
   const [playerForm, setPlayerForm] = useState({
     nombreCompleto: '',
@@ -279,9 +289,17 @@ export function EquiposPage() {
       toast.error('El documento es obligatorio')
       return
     }
-    const anio = Number(playerForm.anioNacimiento)
-    if (!playerForm.anioNacimiento.trim() || Number.isNaN(anio)) {
-      toast.error('El año de nacimiento es obligatorio')
+    let anio: number
+    let fecha: string | null
+    try {
+      const resolved = resolverAnioNacimiento({
+        fecha_nacimiento: playerForm.fechaNacimiento.trim() || null,
+        anio_nacimiento: playerForm.anioNacimiento.trim() ? Number(playerForm.anioNacimiento) : null,
+      })
+      anio = resolved.anio
+      fecha = resolved.fecha
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Fecha de nacimiento no válida')
       return
     }
     try {
@@ -289,7 +307,7 @@ export function EquiposPage() {
         nombre_completo: playerForm.nombreCompleto.trim(),
         documento: playerForm.documento.trim(),
         anio_nacimiento: anio,
-        fecha_nacimiento: playerForm.fechaNacimiento.trim() || null,
+        fecha_nacimiento: fecha,
         observaciones: playerForm.observaciones.trim() || null,
         foto_url: playerForm.fotoUrl ?? null,
         foto_public_id: playerForm.fotoPublicId ?? null,
@@ -960,6 +978,15 @@ export function EquiposPage() {
             </div>
           </SheetHeader>
           <div className="mt-6 flex flex-1 flex-col gap-4">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Buscar jugador por nombre o documento…"
+                value={playerSearch}
+                onChange={(e) => setPlayerSearch(e.target.value)}
+              />
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-sm font-medium">{jugadoresEquipo.length} jugadores activos</h4>
               <div className="flex flex-wrap gap-2">
@@ -1007,20 +1034,22 @@ export function EquiposPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Año de nacimiento</Label>
-                    <Input
-                      type="number"
-                      value={playerForm.anioNacimiento}
-                      onChange={(e) => setPlayerForm({ ...playerForm, anioNacimiento: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Fecha de nacimiento (opcional)</Label>
+                    <Label>Fecha de nacimiento</Label>
                     <Input
                       type="date"
                       value={playerForm.fechaNacimiento}
-                      onChange={(e) => setPlayerForm({ ...playerForm, fechaNacimiento: e.target.value })}
+                      onChange={(e) => {
+                        const { fecha, anio } = onFechaNacimientoChange(e.target.value)
+                        setPlayerForm({ ...playerForm, fechaNacimiento: fecha, anioNacimiento: anio })
+                      }}
                     />
+                    {playerForm.anioNacimiento && (
+                      <p className="text-xs text-muted-foreground">
+                        Año registrado: {playerForm.anioNacimiento}
+                        {edadDesdeAnio(Number(playerForm.anioNacimiento)) > 0 &&
+                          ` · Edad aprox.: ${edadDesdeAnio(Number(playerForm.anioNacimiento))} años`}
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>Observaciones (opcional)</Label>
@@ -1133,19 +1162,45 @@ export function EquiposPage() {
             </Dialog>
 
             <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+              {jugadoresEquipo.length === 0 ? (
+                <div className="p-8">
+                  <EmptyState
+                    icon={UserPlus}
+                    title="Sin jugadores en el equipo"
+                    description="Agrega jugadores manualmente o importa desde Excel."
+                    action={
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <Button size="sm" onClick={() => setPlayerDialogOpen(true)}>
+                          Agregar jugador
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => jugadoresImportRef.current?.click()}>
+                          Importar jugadores
+                        </Button>
+                      </div>
+                    }
+                  />
+                </div>
+              ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">Foto</TableHead>
                     <TableHead>Nombre</TableHead>
                     <TableHead>Documento</TableHead>
-                    <TableHead>Año Nac.</TableHead>
+                    <TableHead>Nacimiento</TableHead>
+                    <TableHead>Edad</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {jugadoresEquipo.map((jugador) => {
+                  {jugadoresEquipoFiltrados.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
+                        Ningún jugador coincide con la búsqueda.
+                      </TableCell>
+                    </TableRow>
+                  ) : jugadoresEquipoFiltrados.map((jugador) => {
                     const fotoSrc = resolveDisplayImageUrl(jugador.fotoPublicId, jugador.fotoUrl, {
                       width: 40,
                       height: 40,
@@ -1166,7 +1221,12 @@ export function EquiposPage() {
                       </TableCell>
                       <TableCell className="font-medium">{jugador.nombre}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{jugador.documento}</TableCell>
-                      <TableCell>{jugador.anioNacimiento}</TableCell>
+                      <TableCell className="text-sm">
+                        {jugador.anioNacimiento ?? '—'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {jugador.anioNacimiento ? edadDesdeAnio(jugador.anioNacimiento) : '—'}
+                      </TableCell>
                       <TableCell>
                         {jugador.estado === 'activo' ? (
                           <Badge variant="outline" className="border-success text-success">
@@ -1191,7 +1251,7 @@ export function EquiposPage() {
                           onClick={() => void handleDeactivatePlayer(jugador.id)}
                           disabled={jugMutating}
                         >
-                          Desactivar
+                          Retirar
                         </Button>
                         <Button
                           variant="ghost"
@@ -1209,6 +1269,7 @@ export function EquiposPage() {
                   })}
                 </TableBody>
               </Table>
+              )}
             </div>
           </div>
         </SheetContent>

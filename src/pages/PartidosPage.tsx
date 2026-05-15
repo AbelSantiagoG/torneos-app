@@ -72,10 +72,12 @@ import {
   listFasesPorCategoria,
   createFaseTorneo,
   setFaseActivaCategoria,
+  tiposFaseOptions,
+  puedeCrearSiguienteFase,
 } from '@/features/fases/fasesTorneoService'
 
 interface PartidosPageProps {
-  onOpenActa?: () => void
+  onOpenActa?: (partidoId: string, categoriaId: string) => void
 }
 
 function initials(nombre: string) {
@@ -152,8 +154,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [nuevoOrden, setNuevoOrden] = useState('0')
   const [manualFaseId, setManualFaseId] = useState('')
   const [faseDialogOpen, setFaseDialogOpen] = useState(false)
+  const [siguienteFaseOpen, setSiguienteFaseOpen] = useState(false)
   const [faseNombre, setFaseNombre] = useState('')
-  const [faseTipo, setFaseTipo] = useState('cuadrangulares')
+  const [faseTipo, setFaseTipo] = useState('')
+  const [faseOrden, setFaseOrden] = useState('')
+  const [faseDescripcion, setFaseDescripcion] = useState('')
   const [faseReinicia, setFaseReinicia] = useState(false)
 
   const [progPartido, setProgPartido] = useState<PartidoListaUi | null>(null)
@@ -182,6 +187,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     queryKey: ['fases-categoria', selectedCategoria],
     enabled: Boolean(selectedCategoria),
     queryFn: () => listFasesPorCategoria(selectedCategoria),
+  })
+
+  const siguienteFaseQ = useQuery({
+    queryKey: ['puede-siguiente-fase', selectedCategoria],
+    enabled: Boolean(selectedCategoria),
+    queryFn: () => puedeCrearSiguienteFase(selectedCategoria),
   })
 
   useEffect(() => {
@@ -259,7 +270,15 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
   }
 
-  const handleCrearFase = async () => {
+  const resetFaseForm = () => {
+    setFaseNombre('')
+    setFaseTipo('')
+    setFaseOrden('')
+    setFaseDescripcion('')
+    setFaseReinicia(false)
+  }
+
+  const handleCrearFase = async (esSiguiente = false) => {
     if (!selectedCategoria) {
       toast.error('Selecciona una categoría en «Por categoría».')
       return
@@ -268,17 +287,26 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       toast.error('Indica un nombre para la fase.')
       return
     }
+    if (!faseTipo) {
+      toast.error('Elige el tipo de fase.')
+      return
+    }
     try {
       await createFaseTorneo({
         categoria_id: selectedCategoria,
         nombre: faseNombre.trim(),
         tipo: faseTipo,
+        orden: faseOrden.trim() ? Number(faseOrden) : undefined,
+        descripcion: faseDescripcion.trim() || null,
         reinicia_tabla: faseReinicia,
+        activa: esSiguiente ? true : undefined,
       })
-      toast.success('Fase creada.')
+      toast.success(esSiguiente ? 'Siguiente fase creada.' : 'Fase creada.')
       setFaseDialogOpen(false)
-      setFaseNombre('')
+      setSiguienteFaseOpen(false)
+      resetFaseForm()
       void refetchFases()
+      void siguienteFaseQ.refetch()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
     }
@@ -891,7 +919,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   <Trash2 className="h-3 w-3 text-destructive" />
                                 </Button>
                                 {onOpenActa && (
-                                  <Button variant="ghost" size="sm" onClick={onOpenActa}>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => onOpenActa(partido.id, partido.categoriaId)}
+                                  >
                                     Acta
                                   </Button>
                                 )}
@@ -1084,10 +1116,25 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   pueden asociarse a una fase.
                 </CardDescription>
               </div>
-              <Button type="button" size="sm" disabled={!selectedCategoria} onClick={() => setFaseDialogOpen(true)}>
-                <Plus className="mr-1 h-4 w-4" />
-                Nueva fase
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {siguienteFaseQ.data?.ok && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      resetFaseForm()
+                      setSiguienteFaseOpen(true)
+                    }}
+                  >
+                    Crear siguiente fase
+                  </Button>
+                )}
+                <Button type="button" size="sm" disabled={!selectedCategoria} onClick={() => setFaseDialogOpen(true)}>
+                  <Plus className="mr-1 h-4 w-4" />
+                  Nueva fase
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {!selectedCategoria ? (
@@ -1096,7 +1143,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 <EmptyState
                   icon={Layers}
                   title="Sin fases"
-                  description="Crea la primera fase (por ejemplo «Todos contra todos» o «Eliminatoria»)."
+                  description="Crea la primera fase eligiendo nombre y tipo (nada se crea automáticamente)."
                   action={
                     <Button type="button" onClick={() => setFaseDialogOpen(true)}>
                       <Plus className="mr-2 h-4 w-4" />
@@ -1118,9 +1165,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <TableBody>
                     {fasesList.map((f) => (
                       <TableRow key={f.id}>
-                        <TableCell className="font-medium">{f.nombre}</TableCell>
-                        <TableCell>{f.tipo}</TableCell>
-                        <TableCell>{f.reinicia_tabla ? 'Sí' : 'No'}</TableCell>
+                        <TableCell className="font-medium">
+                          {f.nombre}
+                          {f.descripcion && (
+                            <p className="text-xs font-normal text-muted-foreground">{f.descripcion}</p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {tiposFaseOptions().find((t) => t.value === f.tipo)?.label ?? f.tipo}
+                        </TableCell>
+                        <TableCell>{f.reinicia_tabla ? 'Sí' : 'No (acumula)'}</TableCell>
                         <TableCell>
                           {f.activa ? <Badge>Activa</Badge> : <Badge variant="outline">Inactiva</Badge>}
                         </TableCell>
@@ -1135,6 +1189,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     ))}
                   </TableBody>
                 </Table>
+              )}
+              {siguienteFaseQ.data && !siguienteFaseQ.data.ok && siguienteFaseQ.data.motivo && fasesList.length > 0 && (
+                <p className="mt-3 text-sm text-muted-foreground">{siguienteFaseQ.data.motivo}</p>
               )}
             </CardContent>
           </Card>
@@ -1271,19 +1328,17 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <Input value={faseNombre} onChange={(e) => setFaseNombre(e.target.value)} placeholder="Ej: Eliminatoria" />
             </div>
             <div className="space-y-1">
-              <Label>Tipo</Label>
-              <Select value={faseTipo} onValueChange={setFaseTipo}>
+              <Label>Tipo de fase</Label>
+              <Select value={faseTipo || undefined} onValueChange={setFaseTipo}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Elige un tipo" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="todos_contra_todos">Todos contra todos</SelectItem>
-                  <SelectItem value="fase_grupos">Fase de grupos</SelectItem>
-                  <SelectItem value="cuadrangulares">Cuadrangulares</SelectItem>
-                  <SelectItem value="eliminatoria_directa">Eliminatoria directa</SelectItem>
-                  <SelectItem value="final">Final</SelectItem>
-                  <SelectItem value="tercer_puesto">Tercer puesto</SelectItem>
-                  <SelectItem value="amistoso">Amistoso</SelectItem>
+                  {tiposFaseOptions().map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1301,6 +1356,55 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             </Button>
             <Button type="button" onClick={() => void handleCrearFase()}>
               Crear
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={siguienteFaseOpen} onOpenChange={setSiguienteFaseOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Crear siguiente fase</DialogTitle>
+            <DialogDescription>
+              Fase actual completada: {siguienteFaseQ.data?.faseActual?.nombre}. La nueva fase quedará activa.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-1">
+              <Label>Nombre</Label>
+              <Input value={faseNombre} onChange={(e) => setFaseNombre(e.target.value)} placeholder="Ej: Fase 2" />
+            </div>
+            <div className="space-y-1">
+              <Label>Tipo de fase</Label>
+              <Select value={faseTipo || undefined} onValueChange={setFaseTipo}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Elige un tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tiposFaseOptions().map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <p className="text-sm font-medium">Reinicia tabla</p>
+                <p className="text-xs text-muted-foreground">
+                  No: goleadores y disciplina acumulan partidos de fases anteriores.
+                </p>
+              </div>
+              <Switch checked={faseReinicia} onCheckedChange={(v) => setFaseReinicia(v === true)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSiguienteFaseOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={() => void handleCrearFase(true)}>
+              Crear siguiente fase
             </Button>
           </DialogFooter>
         </DialogContent>

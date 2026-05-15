@@ -240,6 +240,8 @@ export async function guardarActaCompleta(input: {
   tieneProgramacion: boolean
   actaCerrada?: boolean
 }): Promise<{ golesLocal: number; golesVisitante: number }> {
+  const suspendido = input.definicion === 'suspendido'
+
   await updateActaCabecera(input.actaId, {
     arbitro_id: input.arbitro_id,
     arbitro_nombre: input.arbitro_nombre,
@@ -287,7 +289,7 @@ export async function guardarActaCompleta(input: {
 
   const delG = await supabase.from('goles').delete().eq('partido_id', input.partidoId)
   assertNoSupabaseError(delG, 'programacion')
-  if (input.goles.length) {
+  if (!suspendido && input.goles.length) {
     const insG = await supabase.from('goles').insert(
       input.goles.map((g) => ({
         partido_id: input.partidoId,
@@ -302,7 +304,7 @@ export async function guardarActaCompleta(input: {
 
   const delT = await supabase.from('tarjetas').delete().eq('partido_id', input.partidoId)
   assertNoSupabaseError(delT, 'programacion')
-  if (input.tarjetas.length) {
+  if (!suspendido && input.tarjetas.length) {
     const insT = await supabase.from('tarjetas').insert(
       input.tarjetas.map((t) => {
         const row: Record<string, unknown> = {
@@ -319,11 +321,17 @@ export async function guardarActaCompleta(input: {
     assertNoSupabaseError(insT, 'programacion')
   }
 
-  const rowsForCount = input.goles.map((g) => ({ equipo_id: g.equipo_id, tipo_gol: g.tipo_gol }))
+  const rowsForCount = suspendido ? [] : input.goles.map((g) => ({ equipo_id: g.equipo_id, tipo_gol: g.tipo_gol }))
   const { local, vis } = countGolesMarcador(rowsForCount, input.equipoLocalId, input.equipoVisitanteId)
   const total = local + vis
-  const hayMarcador = total > 0 || input.definicion === 'penales' || input.definicion === 'walkover'
-  const nuevoEstadoPartido = hayMarcador || input.definicion !== 'tiempo_reglamentario' ? 'jugado' : input.tieneProgramacion ? 'programado' : 'pendiente_programar'
+  const hayMarcador = !suspendido && (total > 0 || input.definicion === 'penales' || input.definicion === 'walkover')
+  const nuevoEstadoPartido = suspendido
+    ? 'suspendido'
+    : hayMarcador || input.definicion !== 'tiempo_reglamentario'
+      ? 'jugado'
+      : input.tieneProgramacion
+        ? 'programado'
+        : 'pendiente_programar'
 
   const upP = await supabase.from('partidos').update({ estado: nuevoEstadoPartido }).eq('id', input.partidoId)
   assertNoSupabaseError(upP, 'programacion')

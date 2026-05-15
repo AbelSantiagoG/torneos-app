@@ -42,6 +42,10 @@ export async function importJugadoresFromRows(
       errores.push({ fila, mensaje: 'fecha_nacimiento no reconocida. Usa YYYY-MM-DD o DD/MM/YYYY.' })
       continue
     }
+    let anio = Number(anioStr)
+    if (fechaIso) {
+      anio = Number(fechaIso.slice(0, 4))
+    }
     const fotoUrl = pickCell(row, 'foto_url', 'foto', 'imagen', 'url_foto')
     const observaciones = pickCell(row, 'observaciones', 'notas', 'notes')
 
@@ -53,9 +57,8 @@ export async function importJugadoresFromRows(
       errores.push({ fila, mensaje: 'Falta documento.' })
       continue
     }
-    const anio = Number(anioStr)
-    if (!anioStr || Number.isNaN(anio) || anio < 1900 || anio > new Date().getFullYear()) {
-      errores.push({ fila, mensaje: 'Año de nacimiento inválido.' })
+    if (!fechaIso && (!anioStr || Number.isNaN(anio) || anio < 1900 || anio > new Date().getFullYear())) {
+      errores.push({ fila, mensaje: 'Indica año de nacimiento o fecha de nacimiento válida.' })
       continue
     }
 

@@ -16,6 +16,7 @@ import {
   ChevronRight,
   CreditCard,
   Layers,
+  Building,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -35,12 +36,13 @@ const menuItems = [
   { path: APP_PATHS.equipos, label: 'Equipos y Jugadores', icon: Users },
   { path: APP_PATHS.carnets, label: 'Carnets', icon: CreditCard },
   { path: APP_PATHS.partidos, label: 'Partidos / Fixture', icon: Calendar },
-  { path: APP_PATHS.acta, label: 'Acta de Partido', icon: FileText },
+  { path: APP_PATHS.actas, label: 'Actas de partido', icon: FileText },
   { path: APP_PATHS.estadisticas, label: 'Estadísticas', icon: BarChart3 },
   { path: APP_PATHS.playoffs, label: 'Playoffs', icon: Trophy },
   { path: APP_PATHS.arbitrajes, label: 'Arbitrajes', icon: Gavel },
   { path: APP_PATHS.finanzas, label: 'Finanzas', icon: DollarSign },
   { path: APP_PATHS.reportes, label: 'Reportes', icon: FileBarChart },
+  { path: APP_PATHS.adminTorneos, label: 'Administración de torneos', icon: Building },
   { path: APP_PATHS.configuracion, label: 'Configuración', icon: Settings },
 ]
 

@@ -43,7 +43,7 @@ export function MediaAssetPicker({ open, onOpenChange, torneoId, tipo, onSelect 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="z-[200] max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ImageIcon className="h-5 w-5" />

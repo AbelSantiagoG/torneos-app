@@ -5,6 +5,12 @@ import { uploadImage, type CloudinaryUploadResult, type UploadImageOptions } fro
 
 export type MediaAssetTipo = UploadImageOptions['type']
 
+const FOLDER_HINT: Record<MediaAssetTipo, string> = {
+  torneo_logo: '/torneos/logos',
+  equipo_logo: '/equipos/logos',
+  jugador_foto: '/jugadores/fotos',
+}
+
 export async function listMediaAssets(torneoId: string, tipo: MediaAssetTipo): Promise<MediaAssetRow[]> {
   const { data, error } = await supabase
     .from('media_assets')
@@ -14,8 +20,20 @@ export async function listMediaAssets(torneoId: string, tipo: MediaAssetTipo): P
     .order('created_at', { ascending: false })
     .limit(120)
 
-  if (error) throw toUserError(error, 'default')
-  return (data ?? []) as MediaAssetRow[]
+  if (!error && data?.length) return data as MediaAssetRow[]
+
+  const all = await supabase
+    .from('media_assets')
+    .select('id, torneo_id, tipo, secure_url, public_id, created_at')
+    .eq('torneo_id', torneoId)
+    .order('created_at', { ascending: false })
+    .limit(200)
+
+  if (all.error) throw toUserError(all.error, 'default')
+  const hint = FOLDER_HINT[tipo]
+  return ((all.data ?? []) as MediaAssetRow[]).filter(
+    (a) => a.tipo === tipo || (a.public_id && a.public_id.includes(hint)),
+  )
 }
 
 export async function insertMediaAsset(input: {

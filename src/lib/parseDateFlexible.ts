@@ -3,6 +3,7 @@
  * Devuelve YYYY-MM-DD o null si no se puede interpretar.
  *
  * Regla: si los 4 dígitos del año van al inicio → año-mes-día; si van al final → día-mes-año.
+ * No usar Date.parse() ni toISOString() para cadenas ambiguas (evita desfases de zona horaria).
  */
 
 const ISO_YMD = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/
@@ -26,14 +27,20 @@ function fromExcelSerial(serial: number): string | null {
   const ms = epoch + Math.round(serial) * 86400000
   const dt = new Date(ms)
   if (Number.isNaN(dt.getTime())) return null
-  return dt.toISOString().slice(0, 10)
+  return toIso(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate())
+}
+
+/** Fecha de celda Excel: usar componentes locales, no toISOString (evita +045830-01 en Postgres). */
+function fromJsDate(d: Date): string | null {
+  if (Number.isNaN(d.getTime())) return null
+  return toIso(d.getFullYear(), d.getMonth() + 1, d.getDate())
 }
 
 export function parseDateFlexible(value: unknown): string | null {
   if (value == null || value === '') return null
 
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10)
+  if (value instanceof Date) {
+    return fromJsDate(value)
   }
 
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -55,24 +62,12 @@ export function parseDateFlexible(value: unknown): string | null {
 
   let m = s.match(ISO_YMD)
   if (m) {
-    const y = Number(m[1])
-    const mo = Number(m[2])
-    const d = Number(m[3])
-    return toIso(y, mo, d)
+    return toIso(Number(m[1]), Number(m[2]), Number(m[3]))
   }
 
   m = s.match(DMY_Y4)
   if (m) {
-    const d = Number(m[1])
-    const mo = Number(m[2])
-    const y = Number(m[3])
-    return toIso(y, mo, d)
-  }
-
-  const tryParse = Date.parse(s)
-  if (!Number.isNaN(tryParse)) {
-    const dt = new Date(tryParse)
-    return dt.toISOString().slice(0, 10)
+    return toIso(Number(m[3]), Number(m[2]), Number(m[1]))
   }
 
   return null

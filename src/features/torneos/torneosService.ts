@@ -32,7 +32,17 @@ export function clearTorneoActivoStorage(): void {
 }
 
 export type TorneoUpdateInput = Partial<
-  Pick<TorneoRow, 'nombre' | 'organizacion' | 'descripcion' | 'fecha_inicio' | 'fecha_fin' | 'logo_url' | 'logo_public_id'>
+  Pick<
+    TorneoRow,
+    | 'nombre'
+    | 'organizacion'
+    | 'descripcion'
+    | 'fecha_inicio'
+    | 'fecha_fin'
+    | 'logo_url'
+    | 'logo_public_id'
+    | 'estado'
+  >
 >
 
 export async function updateTorneo(id: string, data: TorneoUpdateInput): Promise<TorneoRow> {

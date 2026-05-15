@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { pickStr } from '@/features/_shared/supabaseHelpers'
+import { partidoIdsParaEstadisticasFase } from '@/features/fases/fasesTorneoService'
 
 export type VistaRow = Record<string, unknown>
 
@@ -39,6 +40,66 @@ export async function fetchEstadisticasTorneo(torneoId: string): Promise<{
     fetchViewTorneo('vw_disciplina', torneoId),
   ])
   return { tabla, goleadores, disciplina }
+}
+
+/** Estadísticas filtradas por categoría y fase (RPC + acumulado según reinicia_tabla). */
+export async function fetchEstadisticasFiltradas(
+  torneoId: string,
+  categoriaId: string,
+  faseTorneoId: string,
+): Promise<{ tabla: VistaRow[]; goleadores: VistaRow[]; disciplina: VistaRow[] }> {
+  const base = await fetchEstadisticasTorneo(torneoId)
+  let tabla = filterVistaRowsPorCategoria(base.tabla, categoriaId)
+  let goleadores = filterVistaRowsPorCategoria(base.goleadores, categoriaId)
+  let disciplina = filterVistaRowsPorCategoria(base.disciplina, categoriaId)
+
+  if (!faseTorneoId) return { tabla, goleadores, disciplina }
+
+  const rpcTabla = await fetchTablaPosicionesPorFase(faseTorneoId)
+  if (rpcTabla.length) {
+    tabla = rpcTabla
+  } else {
+    tabla = filterVistaRowsPorFase(tabla, faseTorneoId)
+  }
+
+  const partidoIds = new Set(await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId))
+  if (partidoIds.size) {
+    goleadores = filterRowsPorPartidos(goleadores, partidoIds)
+    disciplina = filterRowsPorPartidos(disciplina, partidoIds)
+    if (!rpcTabla.length) {
+      tabla = filterRowsPorPartidos(tabla, partidoIds)
+    }
+  } else {
+    goleadores = filterVistaRowsPorFase(goleadores, faseTorneoId)
+    disciplina = filterVistaRowsPorFase(disciplina, faseTorneoId)
+  }
+
+  return { tabla, goleadores, disciplina }
+}
+
+/** Tabla de posiciones por fase (RPC). */
+export async function fetchTablaPosicionesPorFase(faseTorneoId: string): Promise<VistaRow[]> {
+  const variants = [
+    { fase_torneo_id: faseTorneoId },
+    { p_fase_torneo_id: faseTorneoId },
+  ]
+  for (const args of variants) {
+    const r = await supabase.rpc('obtener_tabla_posiciones_por_fase', args)
+    if (!r.error && r.data) {
+      return (Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[]
+    }
+  }
+  return []
+}
+
+export function filterRowsPorPartidos(rows: VistaRow[], partidoIds: Set<string>): VistaRow[] {
+  if (!partidoIds.size) return rows
+  const hasPartidoCol = rows.some((row) => pickStr(row, 'partido_id'))
+  if (!hasPartidoCol) return rows
+  return rows.filter((row) => {
+    const pid = pickStr(row, 'partido_id')
+    return pid ? partidoIds.has(pid) : false
+  })
 }
 
 const SKIP_KEYS = new Set(['torneo_id', 'created_at', 'updated_at'])

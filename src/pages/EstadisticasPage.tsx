@@ -25,11 +25,9 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias } from '@/features/categorias/useCategorias'
-import { useEstadisticas } from '@/features/estadisticas/useEstadisticas'
 import { getDashboardCounts } from '@/features/dashboard/dashboardService'
 import {
-  filterVistaRowsPorCategoria,
-  filterVistaRowsPorFase,
+  fetchEstadisticasFiltradas,
   formatVistaCell,
   rowKeysForTable,
   type VistaRow,
@@ -58,7 +56,14 @@ export function EstadisticasPage() {
   const torneoId = torneo?.id
 
   const { data: categorias = [] } = useCategorias(torneoId)
-  const { data: statsData, isLoading: statsLoading, error: statsError } = useEstadisticas(torneoId)
+  const statsQ = useQuery({
+    queryKey: ['estadisticas', torneoId, selectedCategoria, selectedFase],
+    enabled: Boolean(torneoId && selectedCategoria),
+    queryFn: () => fetchEstadisticasFiltradas(torneoId!, selectedCategoria, selectedFase),
+  })
+  const statsData = statsQ.data
+  const statsLoading = statsQ.isLoading
+  const statsError = statsQ.error
 
   const countsQ = useQuery({
     queryKey: ['estadisticas-partidos-jugados', torneoId],
@@ -84,30 +89,9 @@ export function EstadisticasPage() {
     if (statsError) toast.error(statsError instanceof Error ? statsError.message : 'Error al cargar estadísticas')
   }, [statsError])
 
-  const tabla = useMemo(
-    () =>
-      filterVistaRowsPorFase(
-        filterVistaRowsPorCategoria(statsData?.tabla ?? [], selectedCategoria),
-        selectedFase,
-      ),
-    [statsData?.tabla, selectedCategoria, selectedFase],
-  )
-  const goleadores = useMemo(
-    () =>
-      filterVistaRowsPorFase(
-        filterVistaRowsPorCategoria(statsData?.goleadores ?? [], selectedCategoria),
-        selectedFase,
-      ),
-    [statsData?.goleadores, selectedCategoria, selectedFase],
-  )
-  const disciplina = useMemo(
-    () =>
-      filterVistaRowsPorFase(
-        filterVistaRowsPorCategoria(statsData?.disciplina ?? [], selectedCategoria),
-        selectedFase,
-      ),
-    [statsData?.disciplina, selectedCategoria, selectedFase],
-  )
+  const tabla = statsData?.tabla ?? []
+  const goleadores = statsData?.goleadores ?? []
+  const disciplina = statsData?.disciplina ?? []
 
   const tablaKeys = useMemo(() => rowKeysForTable(tabla), [tabla])
   const goleadoresKeys = useMemo(() => rowKeysForTable(goleadores), [goleadores])
@@ -140,7 +124,7 @@ export function EstadisticasPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Estadísticas" description="Vistas vw_tabla_posiciones, vw_goleadores y vw_disciplina" />
+      <PageHeader title="Estadísticas" description="Tabla de posiciones, goleadores y disciplina del torneo activo" />
 
       {sinEstadisticasJugadas ? (
         <Card>
@@ -148,7 +132,7 @@ export function EstadisticasPage() {
             <EmptyState
               icon={Trophy}
               title="No hay estadísticas disponibles"
-              description="No hay estadísticas disponibles porque aún no hay partidos jugados."
+              description="Aún no hay estadísticas porque no hay partidos jugados."
             />
           </CardContent>
         </Card>
@@ -211,7 +195,11 @@ export function EstadisticasPage() {
                             <div className="h-5 w-5 rounded-full" style={{ backgroundColor: categoria?.color }} />
                             {pickNombreEquipo(liderRow)}
                           </h3>
-                          <p className="mt-2 text-sm text-muted-foreground">Datos desde vw_tabla_posiciones</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {selectedFase
+                              ? fasesList.find((f) => f.id === selectedFase)?.nombre
+                              : 'Todas las fases'}
+                          </p>
                         </div>
                       </div>
                     </CardContent>
@@ -221,14 +209,16 @@ export function EstadisticasPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Tabla de Posiciones — {categoria?.nombre}</CardTitle>
-                    <CardDescription>Filtrado por categoría cuando la vista lo permite</CardDescription>
+                    <CardDescription>
+                      {selectedFase ? 'Tabla por fase seleccionada' : 'Acumulado de la categoría'}
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     {tabla.length === 0 ? (
                       <EmptyState
                         icon={Trophy}
                         title="Sin datos de tabla"
-                        description="La vista no devolvió filas para esta categoría."
+                        description="No hay datos de tabla para esta categoría o fase."
                       />
                     ) : (
                       <div className="overflow-x-auto">
@@ -271,7 +261,7 @@ export function EstadisticasPage() {
                           <Target className="h-10 w-10 text-chart-1" />
                         </div>
                         <div>
-                          <p className="mb-1 text-sm text-muted-foreground">Goleador (vista)</p>
+                          <p className="mb-1 text-sm text-muted-foreground">Goleador</p>
                           <h3 className="text-2xl font-bold">{pickNombreJugador(topGoleador)}</h3>
                           <p className="mt-2 text-sm text-muted-foreground">
                             {pickNum(topGoleador, 'goles', 'total_goles', 'cantidad_goles')} goles —{' '}
@@ -286,11 +276,11 @@ export function EstadisticasPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Tabla de Goleadores</CardTitle>
-                    <CardDescription>vw_goleadores</CardDescription>
+                    <CardDescription>Ranking de goleadores</CardDescription>
                   </CardHeader>
                   <CardContent>
                     {goleadores.length === 0 ? (
-                      <EmptyState icon={Target} title="Sin goleadores" description="No hay filas en la vista para esta categoría." />
+                      <EmptyState icon={Target} title="Sin goleadores" description="No hay goles registrados en esta categoría o fase." />
                     ) : (
                       <div className="overflow-x-auto">
                         <Table>
@@ -326,7 +316,7 @@ export function EstadisticasPage() {
                   <AlertTriangle className="h-5 w-5 text-warning" />
                   Disciplina
                 </CardTitle>
-                <CardDescription>vw_disciplina</CardDescription>
+                <CardDescription>Tarjetas acumuladas</CardDescription>
               </CardHeader>
               <CardContent>
                 {statsLoading ? (
@@ -335,7 +325,7 @@ export function EstadisticasPage() {
                   <EmptyState
                     icon={AlertTriangle}
                     title="Sin datos de disciplina"
-                    description="No hay filas en la vista para esta categoría."
+                    description="No hay tarjetas registradas en esta categoría o fase."
                   />
                 ) : (
                   <div className="overflow-x-auto">

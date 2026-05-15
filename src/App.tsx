@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { ThemeProvider } from '@/features/theme/ThemeProvider'
@@ -13,6 +13,8 @@ import { EquiposPage } from '@/pages/EquiposPage'
 import { CarnetsPage } from '@/pages/CarnetsPage'
 import { PartidosPage } from '@/pages/PartidosPage'
 import { ActaPartidoPage } from '@/pages/ActaPartidoPage'
+import { ActasListadoPage } from '@/pages/ActasListadoPage'
+import { AdminTorneosPage } from '@/pages/AdminTorneosPage'
 import { EstadisticasPage } from '@/pages/EstadisticasPage'
 import { PlayoffsPage } from '@/pages/PlayoffsPage'
 import { ArbitrajesPage } from '@/pages/ArbitrajesPage'
@@ -37,12 +39,30 @@ function DashboardRoute() {
 
 function PartidosRoute() {
   const navigate = useNavigate()
-  return <PartidosPage onOpenActa={() => navigate('/acta')} />
+  return (
+    <PartidosPage
+      onOpenActa={(partidoId, categoriaId) => {
+        const q = new URLSearchParams()
+        if (partidoId) q.set('partidoId', partidoId)
+        if (categoriaId) q.set('categoriaId', categoriaId)
+        navigate(`/acta?${q.toString()}`)
+      }}
+    />
+  )
 }
 
 function ActaRoute() {
   const navigate = useNavigate()
-  return <ActaPartidoPage onBack={() => navigate('/partidos')} />
+  const [params] = useSearchParams()
+  const partidoId = params.get('partidoId') ?? undefined
+  const categoriaId = params.get('categoriaId') ?? undefined
+  return (
+    <ActaPartidoPage
+      initialPartidoId={partidoId}
+      initialCategoriaId={categoriaId}
+      onBack={() => navigate('/actas')}
+    />
+  )
 }
 
 function AppRoutes() {
@@ -59,8 +79,10 @@ function AppRoutes() {
           <Route path="/equipos" element={<EquiposPage />} />
           <Route path="/carnets" element={<CarnetsPage />} />
           <Route path="/partidos" element={<PartidosRoute />} />
+          <Route path="/actas" element={<ActasListadoPage />} />
           <Route path="/acta" element={<ActaRoute />} />
           <Route path="/estadisticas" element={<EstadisticasPage />} />
+          <Route path="/admin-torneos" element={<AdminTorneosPage />} />
           <Route path="/playoffs" element={<PlayoffsPage />} />
           <Route path="/arbitrajes" element={<ArbitrajesPage />} />
           <Route path="/finanzas" element={<FinanzasPage />} />

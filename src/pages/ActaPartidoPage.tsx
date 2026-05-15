@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Save, ArrowLeft, Plus, Trash2, Printer } from 'lucide-react'
@@ -41,9 +41,14 @@ import { partidosTorneoQueryKey } from '@/features/partidos/usePartidosTorneo'
 import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/uploadService'
 import { isJugadoEstado } from '@/features/partidos/partidosUi'
 import type { DefinicionPartidoDb, TipoGolDb, TipoTarjetaActaDb } from '@/types/database'
+import { ActaPrintDocument } from '@/components/actas/ActaPrintDocument'
+import { exportActaPdf } from '@/features/actas/exportActaPdf'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 interface ActaPartidoPageProps {
   onBack?: () => void
+  initialPartidoId?: string
+  initialCategoriaId?: string
 }
 
 type GolForm = { tempId: string; jugador_id: string; equipo_id: string; minuto: string; tipo_gol: TipoGolDb | string }
@@ -87,12 +92,14 @@ function LogoMark({
 }) {
   const src = resolveDisplayImageUrl(logoPublicId, logoUrl, displayImagePresets.equipoLogoThumb())
   if (src) {
-    return <img src={src} alt="" className={`${size} shrink-0 rounded-lg border object-cover`} />
+    return (
+      <img src={src} alt="" className={`mx-auto ${size} shrink-0 rounded-lg border object-cover`} />
+    )
   }
   const ph = (nombre || '?').slice(0, 2).toUpperCase()
   return (
     <div
-      className={`flex ${size} shrink-0 items-center justify-center rounded-lg text-lg font-bold text-white`}
+      className={`mx-auto flex ${size} shrink-0 items-center justify-center rounded-lg text-lg font-bold text-white`}
       style={{ backgroundColor: color }}
     >
       {ph}
@@ -100,10 +107,11 @@ function LogoMark({
   )
 }
 
-export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
+export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }: ActaPartidoPageProps) {
   const qc = useQueryClient()
-  const [categoriaId, setCategoriaId] = useState('')
-  const [partidoId, setPartidoId] = useState('')
+  const printRef = useRef<HTMLDivElement>(null)
+  const [categoriaId, setCategoriaId] = useState(initialCategoriaId ?? '')
+  const [partidoId, setPartidoId] = useState(initialPartidoId ?? '')
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
@@ -169,10 +177,30 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
+    if (initialCategoriaId) setCategoriaId(initialCategoriaId)
+  }, [initialCategoriaId])
+
+  useEffect(() => {
+    if (initialPartidoId) setPartidoId(initialPartidoId)
+  }, [initialPartidoId])
+
+  useEffect(() => {
     if (categorias.length && !categoriaId) {
       setCategoriaId(categorias[0]!.id)
     }
   }, [categorias, categoriaId])
+
+  const isSuspendido = definicion === 'suspendido'
+
+  useEffect(() => {
+    if (isSuspendido) {
+      setGolesForm([])
+      setTarjetasForm([])
+      setPenL('')
+      setPenV('')
+      setGanadorId('')
+    }
+  }, [isSuspendido])
 
   useEffect(() => {
     if (partidosLista.length && !partidoId) {
@@ -353,24 +381,33 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
     for (const j of titVis) pj.push({ partido_id: partido.id, equipo_id: ev, jugador_id: j, rol: 'titular' })
     for (const j of ingVis) pj.push({ partido_id: partido.id, equipo_id: ev, jugador_id: j, rol: 'ingreso_cambio' })
 
-    for (const g of golesForm) {
-      if (!g.jugador_id) continue
-      if (!jugadoresEnCampo.has(g.jugador_id)) {
-        toast.error('Todos los goles deben asignarse a jugadores que jugaron el partido (titular o ingreso).')
-        return
-      }
+    if (isSuspendido && !observaciones.trim()) {
+      toast.error('Indica observaciones sobre la suspensión del partido.')
+      return
     }
-    for (const t of tarjetasForm) {
-      if (!t.jugador_id) continue
-      if (!jugadoresEnCampo.has(t.jugador_id)) {
-        toast.error('Las tarjetas solo pueden asignarse a jugadores que jugaron el partido.')
-        return
+
+    if (!isSuspendido) {
+      for (const g of golesForm) {
+        if (!g.jugador_id) continue
+        if (!jugadoresEnCampo.has(g.jugador_id)) {
+          toast.error('Todos los goles deben asignarse a jugadores que jugaron el partido (titular o ingreso).')
+          return
+        }
+      }
+      for (const t of tarjetasForm) {
+        if (!t.jugador_id) continue
+        if (!jugadoresEnCampo.has(t.jugador_id)) {
+          toast.error('Las tarjetas solo pueden asignarse a jugadores que jugaron el partido.')
+          return
+        }
       }
     }
 
     setSaving(true)
     try {
-      const golesPayload = golesForm
+      const golesPayload = isSuspendido
+        ? []
+        : golesForm
         .filter((g) => g.jugador_id && g.equipo_id)
         .map((g) => ({
           jugador_id: g.jugador_id,
@@ -379,7 +416,9 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
           tipo_gol: (g.tipo_gol ?? 'normal') as string,
         }))
 
-      const tarPayload = tarjetasForm
+      const tarPayload = isSuspendido
+        ? []
+        : tarjetasForm
         .filter((t) => t.jugador_id)
         .map((t) => ({
           jugador_id: t.jugador_id,
@@ -409,12 +448,12 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
         escuela_arbitral_nombre: escuelaArbitral.trim() || null,
         observaciones: observaciones.trim() || null,
         definicion,
-        fue_tiempo_extra: fueTe,
-        fue_penales: fuePen,
-        penales_local: penL.trim() ? Number(penL) : null,
-        penales_visitante: penV.trim() ? Number(penV) : null,
-        equipo_ganador_id: ganadorId || null,
-        equipo_no_presentado_id: noPresentId || null,
+        fue_tiempo_extra: isSuspendido ? false : fueTe,
+        fue_penales: isSuspendido ? false : fuePen,
+        penales_local: isSuspendido ? null : penL.trim() ? Number(penL) : null,
+        penales_visitante: isSuspendido ? null : penV.trim() ? Number(penV) : null,
+        equipo_ganador_id: isSuspendido ? null : ganadorId || null,
+        equipo_no_presentado_id: isSuspendido ? null : noPresentId || null,
         partidoJugadores: pj,
         cambios: cambiosPayload,
         goles: golesPayload,
@@ -470,7 +509,18 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
     return out
   }, [jugLocalQ.data, jugVisQ.data, el, ev, jugadoresEnCampo])
 
-  const imprimir = () => window.print()
+  const exportarPdf = async () => {
+    if (!printRef.current || !partido) return
+    try {
+      await exportActaPdf(
+        printRef.current,
+        `acta-${localNombre}-vs-${visitNombre}.pdf`.replace(/\s+/g, '-').toLowerCase(),
+      )
+      toast.success('PDF generado')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo generar el PDF')
+    }
+  }
 
   if (torneoLoading) {
     return (
@@ -504,9 +554,9 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                 Volver
               </Button>
             )}
-            <Button type="button" variant="outline" onClick={imprimir} disabled={!partido}>
+            <Button type="button" variant="outline" onClick={() => void exportarPdf()} disabled={!partido}>
               <Printer className="mr-2 h-4 w-4" />
-              Imprimir / PDF
+              Exportar PDF
             </Button>
             <Button type="button" onClick={() => void guardar()} disabled={saving || !partido || Boolean(actaQ.data?.cerrada)}>
               <Save className="mr-2 h-4 w-4" />
@@ -644,8 +694,8 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
               {equiposQ.isLoading ? (
                 <Skeleton className="h-32 w-full" />
               ) : (
-                <div className="flex flex-wrap items-center justify-center gap-8 py-6">
-                  <div className="text-center">
+                <div className="grid grid-cols-1 items-center gap-6 py-6 md:grid-cols-[1fr_auto_1fr]">
+                  <div className="flex flex-col items-center text-center">
                     <LogoMark
                       nombre={localNombre}
                       color={localColor}
@@ -655,9 +705,9 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                     <p className="mt-2 font-semibold">{localNombre}</p>
                     <p className="text-xs text-muted-foreground">Local</p>
                   </div>
-                  <div className="flex flex-col items-center gap-1">
+                  <div className="flex flex-col items-center justify-center gap-1">
                     <div className="flex items-center gap-4">
-                      <p className="text-5xl font-bold">{marcador.local}</p>
+                      <p className="text-5xl font-bold tabular-nums">{marcador.local}</p>
                       <span className="text-2xl text-muted-foreground">-</span>
                       <p className="text-5xl font-bold">{marcador.vis}</p>
                     </div>
@@ -673,7 +723,7 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                       </p>
                     )}
                   </div>
-                  <div className="text-center">
+                  <div className="flex flex-col items-center text-center">
                     <LogoMark
                       nombre={visitNombre}
                       color={visitColor}
@@ -702,7 +752,15 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                   </label>
                 ))}
               </RadioGroup>
-              {definicion === 'penales' && (
+              {isSuspendido && (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    El partido fue suspendido. No se pueden registrar eventos deportivos (goles, tarjetas, penales ni
+                    ganador). Indica observaciones sobre la suspensión.
+                  </AlertDescription>
+                </Alert>
+              )}
+              {definicion === 'penales' && !isSuspendido && (
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="space-y-1">
                     <Label>Penales local</Label>
@@ -726,7 +784,7 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
                   </div>
                 </div>
               )}
-              {definicion === 'walkover' && (
+              {definicion === 'walkover' && !isSuspendido && (
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1">
                     <Label>Equipo ganador</Label>
@@ -960,11 +1018,12 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
             </CardContent>
           </Card>
 
+          {!isSuspendido && (
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base">Goles</CardTitle>
-                <Button type="button" size="sm" variant="outline" onClick={addGol}>
+                <Button type="button" size="sm" variant="outline" onClick={addGol} disabled={isSuspendido}>
                   <Plus className="mr-1 h-4 w-4" />
                   Gol
                 </Button>
@@ -1165,6 +1224,7 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
               </CardContent>
             </Card>
           </div>
+          )}
 
           <Card>
             <CardHeader>
@@ -1187,6 +1247,83 @@ export function ActaPartidoPage({ onBack }: ActaPartidoPageProps) {
             </CardContent>
           </Card>
         </>
+      )}
+
+      {partido && el && ev && (
+        <div className="pointer-events-none fixed -left-[10000px] top-0 opacity-0" aria-hidden>
+          <div ref={printRef}>
+            <ActaPrintDocument
+              torneoNombre={torneo?.nombre ?? ''}
+              categoriaNombre={categoria?.nombre ?? partido.categoriaNombre}
+              jornada={partido.jornada}
+              fecha={partido.fecha}
+              hora={partido.hora}
+              cancha={partido.cancha}
+              localNombre={localNombre}
+              visitNombre={visitNombre}
+              localLogoUrl={localRow?.logo_url}
+              localLogoPublicId={localRow?.logo_public_id}
+              visitLogoUrl={visitRow?.logo_url}
+              visitLogoPublicId={visitRow?.logo_public_id}
+              localColor={localColor}
+              visitColor={visitColor}
+              golesLocal={marcador.local}
+              golesVisitante={marcador.vis}
+              penalesLocal={penL.trim() ? Number(penL) : null}
+              penalesVisitante={penV.trim() ? Number(penV) : null}
+              definicion={definicion}
+              arbitroNombre={arbitroNombre}
+              escuelaArbitral={escuelaArbitral}
+              observaciones={observaciones}
+              titularesLocal={[
+                ...(jugLocalQ.data ?? [])
+                  .filter((j) => titLocal.has(j.id) || ingLocal.has(j.id))
+                  .map((j) => ({
+                    nombre: j.nombre,
+                    rol: titLocal.has(j.id) ? ('titular' as const) : ('ingreso_cambio' as const),
+                  })),
+              ]}
+              titularesVisitante={[
+                ...(jugVisQ.data ?? [])
+                  .filter((j) => titVis.has(j.id) || ingVis.has(j.id))
+                  .map((j) => ({
+                    nombre: j.nombre,
+                    rol: titVis.has(j.id) ? ('titular' as const) : ('ingreso_cambio' as const),
+                  })),
+              ]}
+              cambios={cambiosForm
+                .filter((c) => c.sale_id && c.entra_id)
+                .map((c) => {
+                  const pool = c.equipo_id === el ? jugLocalQ.data : jugVisQ.data
+                  const sale = pool?.find((j) => j.id === c.sale_id)?.nombre ?? '—'
+                  const entra = pool?.find((j) => j.id === c.entra_id)?.nombre ?? '—'
+                  return { sale, entra, minuto: c.minuto }
+                })}
+              goles={golesForm
+                .filter((g) => g.jugador_id)
+                .map((g) => {
+                  const pool = g.equipo_id === el ? jugLocalQ.data : jugVisQ.data
+                  return {
+                    jugador: pool?.find((j) => j.id === g.jugador_id)?.nombre ?? '—',
+                    minuto: g.minuto,
+                    tipo: g.tipo_gol ?? 'normal',
+                  }
+                })}
+              tarjetas={tarjetasForm
+                .filter((t) => t.jugador_id)
+                .map((t) => {
+                  const pool =
+                    t.equipo_id === el ? jugLocalQ.data : t.equipo_id === ev ? jugVisQ.data : [...(jugLocalQ.data ?? []), ...(jugVisQ.data ?? [])]
+                  return {
+                    jugador: pool?.find((j) => j.id === t.jugador_id)?.nombre ?? '—',
+                    tipo: t.tipo,
+                    minuto: t.minuto,
+                    motivo: t.motivo,
+                  }
+                })}
+            />
+          </div>
+        </div>
       )}
 
       <style>{`@media print { .no-print { display: none !important; } }`}</style>
