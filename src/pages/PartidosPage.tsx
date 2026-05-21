@@ -59,6 +59,7 @@ import {
   updatePartidosJornada,
   createPartidoManual,
   getJornadaDeleteSummary,
+  assignPartidosCategoriaSinFase,
   upsertProgramacion,
   generarBorradorSorteo,
   type JornadaDeleteSummary,
@@ -75,9 +76,14 @@ import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/
 import {
   listFasesPorCategoria,
   createFaseTorneo,
+  archiveFaseTorneo,
+  deleteFaseTorneo,
+  getFaseDeleteSummary,
   setFaseActivaCategoria,
   tiposFaseOptions,
   puedeCrearSiguienteFase,
+  type FaseDeleteSummary,
+  type FaseTorneoUi,
 } from '@/features/fases/fasesTorneoService'
 
 interface PartidosPageProps {
@@ -176,6 +182,15 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [faseOrden, setFaseOrden] = useState('')
   const [faseDescripcion, setFaseDescripcion] = useState('')
   const [faseReinicia, setFaseReinicia] = useState(false)
+  const [grupoCantidad, setGrupoCantidad] = useState('2')
+  const [grupoAsignacion, setGrupoAsignacion] = useState('aleatoria')
+  const [clasificadosModo, setClasificadosModo] = useState('manual')
+  const [clasificadosCriterio, setClasificadosCriterio] = useState('primeros_y_segundos')
+  const [deleteFaseTarget, setDeleteFaseTarget] = useState<{
+    fase: FaseTorneoUi
+    summary: FaseDeleteSummary
+  } | null>(null)
+  const [faseDeleting, setFaseDeleting] = useState(false)
 
   const [progPartido, setProgPartido] = useState<PartidoListaUi | null>(null)
   const [progFecha, setProgFecha] = useState('')
@@ -336,6 +351,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setDeleteJornadaLoading(true)
     try {
       const summary = await getJornadaDeleteSummary({
+        torneoId,
         categoriaId: selectedCategoria,
         jornada,
         faseTorneoId: selectedFixtureFase || null,
@@ -353,6 +369,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setDeleteJornadaLoading(true)
     try {
       await deleteJornadaCompleta({
+        torneoId,
         categoriaId: selectedCategoria,
         jornada: deleteJornada.jornada,
         faseTorneoId: selectedFixtureFase || null,
@@ -361,7 +378,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       setDeleteJornada(null)
       invalidatePartidos()
     } catch (e) {
-      toast.error('No se pudo eliminar la jornada porque tiene información asociada.')
+      toast.error('No se pudo eliminar la jornada.')
     } finally {
       setDeleteJornadaLoading(false)
     }
@@ -412,6 +429,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
     try {
       await createFaseTorneo({
+        torneo_id: torneoId,
         categoria_id: selectedCategoria,
         nombre: faseNombre.trim(),
         tipo: faseTipo,
@@ -427,7 +445,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       void refetchFases()
       void siguienteFaseQ.refetch()
     } catch (e) {
-      toast.error(translateUserError(e, 'fixture'))
+      toast.error('No se pudo crear la fase. Revisa los campos obligatorios.')
     }
   }
 
@@ -439,6 +457,45 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       void refetchFases()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
+    }
+  }
+
+  const openDeleteFase = async (fase: FaseTorneoUi) => {
+    setFaseDeleting(true)
+    try {
+      const summary = await getFaseDeleteSummary(fase.id)
+      setDeleteFaseTarget({ fase, summary })
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setFaseDeleting(false)
+    }
+  }
+
+  const confirmarDeleteFase = async () => {
+    if (!deleteFaseTarget) return
+    setFaseDeleting(true)
+    try {
+      await deleteFaseTorneo(deleteFaseTarget.fase.id, deleteFaseTarget.fase.categoria_id)
+      toast.success('Fase eliminada.')
+      setDeleteFaseTarget(null)
+      void refetchFases()
+      void siguienteFaseQ.refetch()
+      invalidatePartidos()
+    } catch {
+      toast.error('No se puede eliminar esta fase porque tiene información asociada. Elimina primero los partidos o archiva la fase.')
+    } finally {
+      setFaseDeleting(false)
+    }
+  }
+
+  const archivarFase = async (fase: FaseTorneoUi) => {
+    try {
+      await archiveFaseTorneo(fase.id, fase.categoria_id)
+      toast.success('Fase archivada.')
+      void refetchFases()
+    } catch {
+      toast.error('No se pudo archivar la fase.')
     }
   }
 
@@ -464,6 +521,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         return
       }
       await generarFixtureCategoria(selectedCategoria)
+      const faseActiva = fasesList.find((f) => f.activa) ?? fasesList[0]
+      if (faseActiva) {
+        await assignPartidosCategoriaSinFase(selectedCategoria, faseActiva.id)
+      }
       toast.success('Fixture generado.')
       setFixtureOpen(false)
       invalidatePartidos()
@@ -840,7 +901,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           <DialogHeader>
             <DialogTitle>Eliminar jornada {deleteJornada?.jornada}</DialogTitle>
             <DialogDescription>
-              Se eliminarán todos los partidos de esta jornada en la categoría y fase seleccionadas.
+              Esta acción eliminará todos los partidos de la jornada seleccionada. Si existen programaciones o actas asociadas,
+              también podrían verse afectadas. ¿Deseas continuar?
             </DialogDescription>
           </DialogHeader>
           {deleteJornada && (
@@ -1001,10 +1063,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       </Dialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:inline-flex lg:w-auto">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 lg:inline-flex lg:w-auto">
           <TabsTrigger value="categoria">Por Categoría</TabsTrigger>
           <TabsTrigger value="sorteo">Sorteo de Horarios</TabsTrigger>
           <TabsTrigger value="fecha">Por Fecha</TabsTrigger>
+          <TabsTrigger value="grupos">Grupos</TabsTrigger>
           <TabsTrigger value="fases" className="gap-1">
             <Layers className="h-4 w-4" />
             Fases
@@ -1389,6 +1452,77 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           </Card>
         </TabsContent>
 
+        <TabsContent value="grupos" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Grupos por fase</CardTitle>
+              <CardDescription>
+                Preparado para fases de grupos y cuadrangulares. No se guardan cambios porque la base aún no expone tablas de grupos.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label>Categoría</Label>
+                  <Select value={selectedCategoria} onValueChange={setSelectedCategoria}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Categoría" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categorias.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Fase</Label>
+                  <Select value={selectedFixtureFase || '__all__'} onValueChange={(v) => setSelectedFixtureFase(v === '__all__' ? '' : v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Fase" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Selecciona una fase</SelectItem>
+                      {fasesList.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Cantidad de grupos</Label>
+                  <Input type="number" min={1} value={grupoCantidad} onChange={(e) => setGrupoCantidad(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                <div className="space-y-1">
+                  <Label>Asignación de equipos</Label>
+                  <Select value={grupoAsignacion} onValueChange={setGrupoAsignacion}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="aleatoria">Aleatoria</SelectItem>
+                      <SelectItem value="manual">Manual</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button type="button" disabled variant="outline">
+                  Repartir equipos
+                </Button>
+              </div>
+              <div className="rounded-md border border-warning/40 bg-warning/10 p-4 text-sm">
+                Para habilitar crear grupo, editar nombre, mover equipos, eliminar grupos vacíos y generar fixture por grupo,
+                se requiere persistencia en Supabase: grupos_fase, grupo_equipos y partidos.grupo_id.
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="fases" className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
@@ -1462,11 +1596,28 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                           {f.activa ? <Badge>Activa</Badge> : <Badge variant="outline">Inactiva</Badge>}
                         </TableCell>
                         <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
                           {!f.activa && (
                             <Button type="button" size="sm" variant="outline" onClick={() => void handleActivarFase(f.id)}>
                               Marcar activa
                             </Button>
                           )}
+                          {f.activa && (
+                            <Button type="button" size="sm" variant="outline" onClick={() => void archivarFase(f)}>
+                              Archivar
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-destructive"
+                            disabled={faseDeleting}
+                            onClick={() => void openDeleteFase(f)}
+                          >
+                            Eliminar fase
+                          </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1644,6 +1795,43 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(deleteFaseTarget)} onOpenChange={(open) => !open && setDeleteFaseTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar fase</DialogTitle>
+            <DialogDescription>
+              Esta acción solo afecta la fase seleccionada y sus partidos asociados dentro de esta categoría.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteFaseTarget && (
+            <div className="space-y-3 py-2 text-sm">
+              <p className="font-medium">{deleteFaseTarget.fase.nombre}</p>
+              <p>Partidos asociados: {deleteFaseTarget.summary.partidos}</p>
+              {deleteFaseTarget.summary.tieneInformacionAsociada && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+                  Esta fase tiene información asociada: {deleteFaseTarget.summary.jugados} jugados,{' '}
+                  {deleteFaseTarget.summary.programaciones} programaciones, {deleteFaseTarget.summary.actas} actas,{' '}
+                  {deleteFaseTarget.summary.goles} goles y {deleteFaseTarget.summary.tarjetas} tarjetas.
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteFaseTarget(null)}>
+              Cancelar
+            </Button>
+            {deleteFaseTarget && (
+              <Button type="button" variant="secondary" onClick={() => void archivarFase(deleteFaseTarget.fase)}>
+                Archivar fase
+              </Button>
+            )}
+            <Button type="button" variant="destructive" disabled={faseDeleting} onClick={() => void confirmarDeleteFase()}>
+              Eliminar fase
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={siguienteFaseOpen} onOpenChange={setSiguienteFaseOpen}>
         <DialogContent>
           <DialogHeader>
@@ -1681,6 +1869,38 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               </div>
               <Switch checked={faseReinicia} onCheckedChange={(v) => setFaseReinicia(v === true)} />
             </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Equipos clasificados</Label>
+                <Select value={clasificadosModo} onValueChange={setClasificadosModo}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">Selección manual</SelectItem>
+                    <SelectItem value="clasificacion">Desde clasificación</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Criterio sugerido</Label>
+                <Select value={clasificadosCriterio} onValueChange={setClasificadosCriterio}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="primeros">Primeros de cada grupo</SelectItem>
+                    <SelectItem value="primeros_y_segundos">Primeros y segundos</SelectItem>
+                    <SelectItem value="mejores_terceros">Mejores terceros</SelectItem>
+                    <SelectItem value="tabla_general">Orden por tabla general</SelectItem>
+                    <SelectItem value="cruces_manual">Cruces manuales</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              La selección y los cruces quedan preparados en la UI; guardar clasificados requiere persistencia adicional.
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSiguienteFaseOpen(false)}>

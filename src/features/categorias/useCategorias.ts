@@ -24,6 +24,8 @@ export function useCategorias(torneoId: string | undefined) {
     if (torneoId) {
       void qc.invalidateQueries({ queryKey: categoriasQueryKey(torneoId) })
       void qc.invalidateQueries({ queryKey: torneoActivoQueryKey })
+      void qc.invalidateQueries({ queryKey: ['partidos-torneo', torneoId] })
+      void qc.invalidateQueries({ queryKey: ['estadisticas', torneoId] })
     }
   }
 

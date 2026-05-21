@@ -49,6 +49,10 @@ import { formatCurrency } from '@/lib/utils'
 import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias } from '@/features/categorias/useCategorias'
+import {
+  getCategoriaDeleteSummary,
+  type CategoriaDeleteSummary,
+} from '@/features/categorias/categoriasService'
 import type { Categoria, FormatoCompetenciaUi } from '@/types/torneo'
 
 const FORMATO_LABELS: Record<FormatoCompetenciaUi, string> = {
@@ -76,6 +80,11 @@ export function CategoriasPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingCategoria, setEditingCategoria] = useState<Categoria | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{
+    categoria: Categoria
+    summary: CategoriaDeleteSummary
+  } | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const [formData, setFormData] = useState({
     nombre: '',
     rangoEdad: '',
@@ -204,12 +213,26 @@ export function CategoriasPage() {
     }
   }
 
-  const handleDelete = async (c: Categoria) => {
+  const openDeleteCategoria = async (c: Categoria) => {
+    setDeleteLoading(true)
     try {
-      await deleteCategoria(c.id)
-      toast.success('Categoría eliminada')
+      const summary = await getCategoriaDeleteSummary(c.id)
+      setDeleteTarget({ categoria: c, summary })
     } catch (e) {
       toast.error(translateUserError(e, 'categoria'))
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    try {
+      await deleteCategoria(deleteTarget.categoria.id)
+      toast.success('Categoría eliminada')
+      setDeleteTarget(null)
+    } catch (e) {
+      toast.error('No se puede eliminar la categoría porque tiene información asociada.')
     }
   }
 
@@ -496,7 +519,12 @@ export function CategoriasPage() {
                         </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" disabled={isMutating}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={isMutating || deleteLoading}
+                              onClick={() => void openDeleteCategoria(categoria)}
+                            >
                               <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
                           </AlertDialogTrigger>
@@ -504,14 +532,21 @@ export function CategoriasPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>¿Eliminar categoría?</AlertDialogTitle>
                               <AlertDialogDescription>
-                                Esta acción puede fallar si existen equipos u otros registros ligados a {categoria.nombre}.
+                                Esta acción eliminará la información asociada a {categoria.nombre}. No afecta otras categorías del torneo.
+                                {deleteTarget?.categoria.id === categoria.id && (
+                                  <span className="mt-3 block rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+                                    Equipos: {deleteTarget.summary.equipos}. Jugadores vinculados: {deleteTarget.summary.jugadores}.
+                                    Fases: {deleteTarget.summary.fases}. Partidos: {deleteTarget.summary.partidos}.
+                                    Actas: {deleteTarget.summary.actas}. Pagos: {deleteTarget.summary.pagos}.
+                                  </span>
+                                )}
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancelar</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={() => void handleDelete(categoria)}
+                                onClick={() => void handleDelete()}
                               >
                                 Eliminar
                               </AlertDialogAction>

@@ -6,6 +6,7 @@ import { isJugadoEstado } from '@/features/partidos/partidosUi'
 
 export type FaseTorneoUi = {
   id: string
+  torneo_id?: string | null
   categoria_id: string
   nombre: string
   tipo: TipoFaseTorneoDb | string
@@ -35,6 +36,7 @@ export function tiposFaseOptions() {
 function mapFaseRow(row: Record<string, unknown>): FaseTorneoUi {
   return {
     id: String(row.id ?? row.fase_torneo_id ?? ''),
+    torneo_id: pickStr(row, 'torneo_id') || null,
     categoria_id: String(row.categoria_id ?? ''),
     nombre: String(row.nombre ?? row.nombre_fase ?? ''),
     tipo: pickStr(row, 'tipo', 'tipo_fase') || 'todos_contra_todos',
@@ -102,6 +104,7 @@ export async function puedeCrearSiguienteFase(categoriaId: string): Promise<{
 }
 
 export async function createFaseTorneo(input: {
+  torneo_id?: string
   categoria_id: string
   nombre: string
   tipo: TipoFaseTorneoDb | string
@@ -109,7 +112,11 @@ export async function createFaseTorneo(input: {
   reinicia_tabla: boolean
   descripcion?: string | null
   activa?: boolean
+  fase_origen_id?: string | null
 }): Promise<string> {
+  if (!input.categoria_id || !input.nombre.trim() || !input.tipo) {
+    throw new Error('No se pudo crear la fase. Revisa los campos obligatorios.')
+  }
   const existentes = await listFasesPorCategoria(input.categoria_id)
   const orden =
     input.orden != null && !Number.isNaN(input.orden)
@@ -124,20 +131,31 @@ export async function createFaseTorneo(input: {
   }
 
   const base: Record<string, unknown> = {
+    ...(input.torneo_id ? { torneo_id: input.torneo_id } : {}),
     categoria_id: input.categoria_id,
     nombre: input.nombre.trim(),
     orden,
-    activa: activar,
-    reinicia_tabla: input.reinicia_tabla,
+    activa: Boolean(activar),
+    reinicia_tabla: Boolean(input.reinicia_tabla),
+    ...(input.fase_origen_id ? { fase_origen_id: input.fase_origen_id } : {}),
     descripcion: input.descripcion?.trim() || null,
   }
 
-  let r = await supabase.from('fases_torneo').insert({ ...base, tipo_fase: input.tipo }).select('id').single()
-  if (r.error) {
-    r = await supabase.from('fases_torneo').insert({ ...base, tipo: input.tipo }).select('id').single()
+  const variants = [
+    { ...base, tipo_fase: input.tipo },
+    { ...base, tipo: input.tipo },
+    { ...base, tipo_fase: input.tipo, descripcion: undefined },
+    { ...base, tipo: input.tipo, descripcion: undefined },
+  ]
+
+  let lastError: unknown = null
+  for (const variant of variants) {
+    const clean = Object.fromEntries(Object.entries(variant).filter(([, value]) => value !== undefined))
+    const r = await supabase.from('fases_torneo').insert(clean).select('id').single()
+    if (!r.error) return String((r.data as { id: string }).id)
+    lastError = r.error
   }
-  if (r.error) throw toUserError(r.error, 'fixture')
-  return String((r.data as { id: string }).id)
+  throw toUserError(lastError, 'fixture')
 }
 
 export async function updateFaseTorneo(
@@ -165,6 +183,78 @@ export async function setFaseActivaCategoria(categoriaId: string, faseId: string
   if (r0.error) throw toUserError(r0.error, 'fixture')
   const r1 = await supabase.from('fases_torneo').update({ activa: true }).eq('id', faseId).eq('categoria_id', categoriaId)
   if (r1.error) throw toUserError(r1.error, 'fixture')
+}
+
+async function countByPartidos(table: string, partidoIds: string[]): Promise<number> {
+  if (!partidoIds.length) return 0
+  const r = await supabase.from(table).select('id', { count: 'exact', head: true }).in('partido_id', partidoIds)
+  if (r.error) throw toUserError(r.error, 'fixture')
+  return r.count ?? 0
+}
+
+export type FaseDeleteSummary = {
+  partidos: number
+  jugados: number
+  programaciones: number
+  actas: number
+  goles: number
+  tarjetas: number
+  tieneInformacionAsociada: boolean
+}
+
+export async function getFaseDeleteSummary(faseId: string): Promise<FaseDeleteSummary> {
+  const r = await supabase.from('partidos').select('id, estado').eq('fase_torneo_id', faseId)
+  if (r.error) throw toUserError(r.error, 'fixture')
+  const rows = (r.data ?? []) as { id: string; estado: string }[]
+  const ids = rows.map((row) => row.id)
+  const [programaciones, actas, goles, tarjetas] = await Promise.all([
+    countByPartidos('programaciones_partido', ids),
+    countByPartidos('actas_partido', ids),
+    countByPartidos('goles', ids),
+    countByPartidos('tarjetas', ids),
+  ])
+  const jugados = rows.filter((row) => isJugadoEstado(row.estado)).length
+  return {
+    partidos: rows.length,
+    jugados,
+    programaciones,
+    actas,
+    goles,
+    tarjetas,
+    tieneInformacionAsociada: jugados > 0 || programaciones > 0 || actas > 0 || goles > 0 || tarjetas > 0,
+  }
+}
+
+async function deletePartidosDependenciasMasivo(partidoIds: string[]): Promise<void> {
+  if (!partidoIds.length) return
+  const steps = [
+    () => supabase.from('cambios_partido').delete().in('partido_id', partidoIds),
+    () => supabase.from('partido_jugadores').delete().in('partido_id', partidoIds),
+    () => supabase.from('programaciones_partido').delete().in('partido_id', partidoIds),
+    () => supabase.from('arbitrajes').delete().in('partido_id', partidoIds),
+    () => supabase.from('goles').delete().in('partido_id', partidoIds),
+    () => supabase.from('tarjetas').delete().in('partido_id', partidoIds),
+    () => supabase.from('actas_partido').delete().in('partido_id', partidoIds),
+    () => supabase.from('partidos').delete().in('id', partidoIds),
+  ]
+  for (const step of steps) {
+    const r = await step()
+    if (r.error) throw toUserError(r.error, 'fixture')
+  }
+}
+
+export async function deleteFaseTorneo(faseId: string, categoriaId: string): Promise<void> {
+  const part = await supabase.from('partidos').select('id').eq('fase_torneo_id', faseId).eq('categoria_id', categoriaId)
+  if (part.error) throw toUserError(part.error, 'fixture')
+  const ids = ((part.data ?? []) as { id: string }[]).map((row) => row.id)
+  await deletePartidosDependenciasMasivo(ids)
+  const r = await supabase.from('fases_torneo').delete().eq('id', faseId).eq('categoria_id', categoriaId)
+  if (r.error) throw toUserError(r.error, 'fixture')
+}
+
+export async function archiveFaseTorneo(faseId: string, categoriaId: string): Promise<void> {
+  const r = await supabase.from('fases_torneo').update({ activa: false }).eq('id', faseId).eq('categoria_id', categoriaId)
+  if (r.error) throw toUserError(r.error, 'fixture')
 }
 
 /** IDs de partidos para estadísticas acumuladas según reinicio de tabla. */

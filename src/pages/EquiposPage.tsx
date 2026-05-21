@@ -78,6 +78,7 @@ export function EquiposPage() {
 
   const [importReport, setImportReport] = useState<{
     titulo: string
+    validos?: number
     creados: number
     omitidos: string[]
     errores: { fila: number; mensaje: string }[]
@@ -382,6 +383,7 @@ export function EquiposPage() {
       const res = await importJugadoresFromRows(rows, eqId)
       setImportReport({
         titulo: 'Importación de jugadores',
+        validos: res.validos,
         creados: res.creados,
         omitidos: res.omitidos,
         errores: res.errores,
@@ -499,6 +501,9 @@ export function EquiposPage() {
           </DialogHeader>
           {importReport && (
             <div className="space-y-3 text-sm">
+              <p>
+                <strong>Registros válidos:</strong> {importReport.validos ?? importReport.creados}
+              </p>
               <p>
                 <strong>Creados:</strong> {importReport.creados}
               </p>

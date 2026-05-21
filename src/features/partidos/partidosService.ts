@@ -3,7 +3,6 @@ import { throwOnError } from '@/features/_shared/supabaseHelpers'
 import { toUserError } from '@/lib/supabaseErrors'
 import { formatHoraUi, HORA_FRANJAS_PREDETERMINADAS, normalizeHoraDb } from '@/features/horarios/horariosService'
 import { mapVwPartidoRow, type PartidoDashboardUi } from '@/features/partidos/partidosUi'
-import { deletePartidoCascade as deletePartidoCascadeInternal } from '@/features/partidos/partidoCleanup'
 
 export { deletePartidoCascade } from '@/features/partidos/partidoCleanup'
 
@@ -581,6 +580,7 @@ export type JornadaDeleteSummary = {
 }
 
 export async function getJornadaDeleteSummary(params: {
+  torneoId?: string
   categoriaId: string
   jornada: number
   faseTorneoId?: string | null
@@ -590,6 +590,7 @@ export async function getJornadaDeleteSummary(params: {
     .select('id, estado, fase_torneo_id')
     .eq('categoria_id', params.categoriaId)
     .eq('jornada', params.jornada)
+  if (params.torneoId) q = q.eq('torneo_id', params.torneoId)
 
   const r = await q
   if (r.error) throw toUserError(r.error, 'fixture')
@@ -615,24 +616,43 @@ export async function getJornadaDeleteSummary(params: {
   }
 }
 
+async function deletePartidosDependenciasMasivo(partidoIds: string[]): Promise<void> {
+  if (!partidoIds.length) return
+  const steps = [
+    () => supabase.from('cambios_partido').delete().in('partido_id', partidoIds),
+    () => supabase.from('partido_jugadores').delete().in('partido_id', partidoIds),
+    () => supabase.from('programaciones_partido').delete().in('partido_id', partidoIds),
+    () => supabase.from('arbitrajes').delete().in('partido_id', partidoIds),
+    () => supabase.from('goles').delete().in('partido_id', partidoIds),
+    () => supabase.from('tarjetas').delete().in('partido_id', partidoIds),
+    () => supabase.from('actas_partido').delete().in('partido_id', partidoIds),
+    () => supabase.from('partidos').delete().in('id', partidoIds),
+  ]
+  for (const step of steps) {
+    const r = await step()
+    if (r.error) throw toUserError(r.error, 'fixture')
+  }
+}
+
 export async function deleteJornadaCompleta(params: {
+  torneoId?: string
   categoriaId: string
   jornada: number
   faseTorneoId?: string | null
 }): Promise<void> {
-  const r = await supabase
+  let q = supabase
     .from('partidos')
     .select('id, fase_torneo_id')
     .eq('categoria_id', params.categoriaId)
     .eq('jornada', params.jornada)
+  if (params.torneoId) q = q.eq('torneo_id', params.torneoId)
+  const r = await q
   if (r.error) throw toUserError(r.error, 'fixture')
   const ids = ((r.data ?? []) as { id: string; fase_torneo_id?: string | null }[])
     .filter((row) => (params.faseTorneoId ? sameFixtureFase(row.fase_torneo_id ?? null, params.faseTorneoId) : true))
     .map((row) => row.id)
 
-  for (const id of ids) {
-    await deletePartidoCascadeInternal(id)
-  }
+  await deletePartidosDependenciasMasivo(ids)
 }
 
 export async function updatePartidosJornada(
@@ -645,6 +665,15 @@ export async function updatePartidosJornada(
       .eq('id', update.id)
     if (r.error) throw toUserError(r.error, 'fixture')
   }
+}
+
+export async function assignPartidosCategoriaSinFase(categoriaId: string, faseTorneoId: string): Promise<void> {
+  const r = await supabase
+    .from('partidos')
+    .update({ fase_torneo_id: faseTorneoId })
+    .eq('categoria_id', categoriaId)
+    .is('fase_torneo_id', null)
+  if (r.error) throw toUserError(r.error, 'fixture')
 }
 
 function addDaysToIsoDate(isoDate: string, days: number): string {
