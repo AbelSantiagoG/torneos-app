@@ -367,6 +367,12 @@ export async function countPartidosEnCategoria(categoriaId: string): Promise<num
   return r.count ?? 0
 }
 
+export async function countPartidosEnFase(faseTorneoId: string): Promise<number> {
+  const r = await supabase.from('partidos').select('id', { count: 'exact', head: true }).eq('fase_torneo_id', faseTorneoId)
+  if (r.error) throw toUserError(r.error, 'fixture')
+  return r.count ?? 0
+}
+
 export async function generarFixtureCategoria(categoriaId: string, _fechaInicioLegacy?: string | null): Promise<void> {
   const variants: Record<string, unknown>[] = [
     { p_categoria_id: categoriaId },

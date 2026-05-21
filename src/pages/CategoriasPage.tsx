@@ -53,6 +53,8 @@ import {
   getCategoriaDeleteSummary,
   type CategoriaDeleteSummary,
 } from '@/features/categorias/categoriasService'
+import { listFasesPorCategoria } from '@/features/fases/fasesTorneoService'
+import { crearGruposFase } from '@/features/grupos/gruposFaseService'
 import type { Categoria, FormatoCompetenciaUi } from '@/types/torneo'
 
 const FORMATO_LABELS: Record<FormatoCompetenciaUi, string> = {
@@ -94,6 +96,8 @@ export function CategoriasPage() {
     edadMax: '' as string,
     formato: 'todos_contra_todos' as FormatoCompetenciaUi,
   })
+  const [grupoCantidad, setGrupoCantidad] = useState('2')
+  const [grupoAsignacion, setGrupoAsignacion] = useState('aleatoria')
 
   useEffect(() => {
     if (torneoError) {
@@ -119,6 +123,8 @@ export function CategoriasPage() {
         edadMax: categoria.edadMax != null ? String(categoria.edadMax) : '',
         formato: categoria.formato ?? 'todos_contra_todos',
       })
+      setGrupoCantidad('2')
+      setGrupoAsignacion('aleatoria')
     } else {
       setEditingCategoria(null)
       setFormData({
@@ -130,6 +136,8 @@ export function CategoriasPage() {
         edadMax: '',
         formato: 'todos_contra_todos',
       })
+      setGrupoCantidad('2')
+      setGrupoAsignacion('aleatoria')
     }
     setIsDialogOpen(true)
   }
@@ -169,6 +177,11 @@ export function CategoriasPage() {
       toast.error('Selecciona un formato de competencia válido.')
       return
     }
+    const cantidadGrupos = Number(grupoCantidad)
+    if (!editingCategoria && formData.formato === 'fase_grupos' && (!Number.isInteger(cantidadGrupos) || cantidadGrupos < 1)) {
+      toast.error('Indica cuántos grupos quieres crear.')
+      return
+    }
     try {
       if (editingCategoria) {
         await updateCategoria({
@@ -186,7 +199,7 @@ export function CategoriasPage() {
         })
         toast.success('Categoría actualizada')
       } else {
-        await createCategoria({
+        const creada = await createCategoria({
           nombre: formData.nombre.trim(),
           rango_edad: formData.rangoEdad.trim() || null,
           color: formData.color,
@@ -196,7 +209,18 @@ export function CategoriasPage() {
           edad_max: edadMax,
           formato: formData.formato,
         })
-        toast.success('Categoría creada')
+        if (formData.formato === 'fase_grupos') {
+          const fases = await listFasesPorCategoria(creada.id)
+          const faseInicial = fases.find((f) => f.orden === 1) ?? fases[0]
+          if (faseInicial) await crearGruposFase(faseInicial.id, cantidadGrupos)
+          toast.success(
+            grupoAsignacion === 'aleatoria'
+              ? 'Categoría y grupos creados. Cuando cargues los equipos, repártelos desde la pestaña Grupos.'
+              : 'Categoría y grupos creados. Asigna los equipos manualmente desde la pestaña Grupos.',
+          )
+        } else {
+          toast.success('Categoría creada')
+        }
       }
       setIsDialogOpen(false)
     } catch (e) {
@@ -383,6 +407,35 @@ export function CategoriasPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                {!editingCategoria && formData.formato === 'fase_grupos' && (
+                  <div className="grid gap-4 rounded-md border p-3 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Cantidad de grupos</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={grupoCantidad}
+                        onChange={(e) => setGrupoCantidad(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Asignación de equipos</Label>
+                      <Select value={grupoAsignacion} onValueChange={setGrupoAsignacion}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="aleatoria">Aleatoria</SelectItem>
+                          <SelectItem value="manual">Manual</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-xs text-muted-foreground md:col-span-2">
+                      Los grupos se crean con la categoría. Cuando cargues los equipos, podrás repartirlos o ajustarlos
+                      manualmente en Partidos / Fixture, pestaña Grupos.
+                    </p>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>

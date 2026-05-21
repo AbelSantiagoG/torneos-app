@@ -52,6 +52,7 @@ import { usePartidosTorneo, partidosTorneoQueryKey } from '@/features/partidos/u
 import {
   groupByFecha,
   countPartidosEnCategoria,
+  countPartidosEnFase,
   generarFixtureCategoria,
   deletePartidoCascade,
   deleteJornadaCompleta,
@@ -85,6 +86,24 @@ import {
   type FaseDeleteSummary,
   type FaseTorneoUi,
 } from '@/features/fases/fasesTorneoService'
+import {
+  agregarEquipoAGrupo,
+  crearGruposFase,
+  deleteGrupoVacio,
+  generarFixtureGruposFase,
+  isFasePorGrupos,
+  listFixtureGruposFase,
+  listGrupoEquipos,
+  listGruposFase,
+  moverEquipoAGrupo,
+  quitarEquipoDeGrupo,
+  repartirEquiposAleatorioFase,
+  updateGrupoNombre,
+  validarGruposAntesDeFixture,
+  type FixtureGrupoUi,
+  type GrupoEquipoUi,
+  type GrupoFaseUi,
+} from '@/features/grupos/gruposFaseService'
 
 interface PartidosPageProps {
   onOpenActa?: (partidoId: string, categoriaId: string) => void
@@ -184,6 +203,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [faseReinicia, setFaseReinicia] = useState(false)
   const [grupoCantidad, setGrupoCantidad] = useState('2')
   const [grupoAsignacion, setGrupoAsignacion] = useState('aleatoria')
+  const [grupoLoading, setGrupoLoading] = useState(false)
+  const [grupoNombresDraft, setGrupoNombresDraft] = useState<Record<string, string>>({})
+  const [grupoEquipoDraft, setGrupoEquipoDraft] = useState<Record<string, string>>({})
+  const [grupoMoverDraft, setGrupoMoverDraft] = useState<Record<string, string>>({})
   const [clasificadosModo, setClasificadosModo] = useState('manual')
   const [clasificadosCriterio, setClasificadosCriterio] = useState('primeros_y_segundos')
   const [deleteFaseTarget, setDeleteFaseTarget] = useState<{
@@ -250,10 +273,35 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setSelectedFixtureFase('')
   }, [selectedCategoria])
 
-  const categoriaActiva = useMemo(
-    () => categorias.find((c) => c.id === selectedCategoria),
-    [categorias, selectedCategoria],
-  )
+  const faseActualFixture = useMemo(() => {
+    if (!fasesList.length) return null
+    if (selectedFixtureFase) return fasesList.find((f) => f.id === selectedFixtureFase) ?? null
+    return fasesList.find((f) => f.activa) ?? fasesList[0] ?? null
+  }, [fasesList, selectedFixtureFase])
+
+  const fixtureEsPorGrupos = isFasePorGrupos(faseActualFixture?.tipo)
+
+  const {
+    data: gruposFase = [],
+    refetch: refetchGruposFase,
+    isLoading: gruposLoading,
+  } = useQuery<GrupoFaseUi[]>({
+    queryKey: ['grupos-fase', faseActualFixture?.id],
+    enabled: Boolean(faseActualFixture?.id && fixtureEsPorGrupos),
+    queryFn: () => listGruposFase(faseActualFixture!.id),
+  })
+
+  const { data: grupoEquipos = [], refetch: refetchGrupoEquipos } = useQuery<GrupoEquipoUi[]>({
+    queryKey: ['grupo-equipos', faseActualFixture?.id],
+    enabled: Boolean(faseActualFixture?.id && fixtureEsPorGrupos),
+    queryFn: () => listGrupoEquipos(faseActualFixture!.id),
+  })
+
+  const { data: fixtureGrupos = [], refetch: refetchFixtureGrupos } = useQuery<FixtureGrupoUi[]>({
+    queryKey: ['fixture-grupos', faseActualFixture?.id],
+    enabled: Boolean(faseActualFixture?.id && fixtureEsPorGrupos),
+    queryFn: () => listFixtureGruposFase(faseActualFixture!.id),
+  })
 
   const partidosCategoria = useMemo(
     () =>
@@ -280,6 +328,38 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const jornadas = useMemo(
     () => [...new Set(partidosCategoria.map((p) => p.jornada))].sort((a, b) => a - b),
     [partidosCategoria],
+  )
+
+  const fixtureGruposPorGrupo = useMemo(() => {
+    const groups = new Map<string, FixtureGrupoUi[]>()
+    for (const partido of fixtureGrupos) {
+      const key = partido.grupoId || partido.grupoNombre
+      groups.set(key, [...(groups.get(key) ?? []), partido])
+    }
+    return [...groups.entries()].map(([key, partidos]) => ({
+      key,
+      nombre: partidos[0]?.grupoNombre ?? 'Grupo',
+      orden: partidos[0]?.grupoOrden ?? 0,
+      partidos: partidos.sort((a, b) => a.jornada - b.jornada || a.orden - b.orden),
+    })).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
+  }, [fixtureGrupos])
+
+  const grupoEquiposPorGrupo = useMemo(() => {
+    const groups = new Map<string, GrupoEquipoUi[]>()
+    for (const item of grupoEquipos) {
+      groups.set(item.grupoId, [...(groups.get(item.grupoId) ?? []), item])
+    }
+    return groups
+  }, [grupoEquipos])
+
+  const equiposAsignadosEnFase = useMemo(
+    () => new Set(grupoEquipos.map((item) => item.equipoId)),
+    [grupoEquipos],
+  )
+
+  const equiposDisponiblesParaGrupo = useMemo(
+    () => equiposCat.filter((equipo) => !equiposAsignadosEnFase.has(equipo.id)),
+    [equiposCat, equiposAsignadosEnFase],
   )
 
   const partidosPorFecha = useMemo(() => groupByFecha(programados), [programados])
@@ -499,13 +579,139 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
   }
 
+  const refetchGrupos = () => {
+    void refetchGruposFase()
+    void refetchGrupoEquipos()
+    void refetchFixtureGrupos()
+  }
+
+  const confirmarCambioGrupo = (grupo?: GrupoFaseUi | null): boolean => {
+    if (!grupo || grupo.partidosJugados <= 0) return true
+    return confirm('Esta fase ya tiene partidos jugados. Modificar el grupo puede dejar el fixture inconsistente. ¿Deseas continuar?')
+  }
+
+  const handleCrearGrupos = async () => {
+    if (!faseActualFixture) {
+      toast.error('Selecciona una fase.')
+      return
+    }
+    const cantidad = Number(grupoCantidad)
+    setGrupoLoading(true)
+    try {
+      await crearGruposFase(faseActualFixture.id, cantidad)
+      toast.success('Grupos creados.')
+      refetchGrupos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
+  const handleRepartirEquipos = async () => {
+    if (!faseActualFixture) return
+    if (!gruposFase.length) {
+      toast.error('Primero debes crear los grupos de esta fase.')
+      return
+    }
+    setGrupoLoading(true)
+    try {
+      await repartirEquiposAleatorioFase(faseActualFixture.id)
+      toast.success('Equipos repartidos.')
+      refetchGrupos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
+  const handleRenombrarGrupo = async (grupo: GrupoFaseUi) => {
+    if (!confirmarCambioGrupo(grupo)) return
+    const nombre = grupoNombresDraft[grupo.id] ?? grupo.nombre
+    setGrupoLoading(true)
+    try {
+      await updateGrupoNombre(grupo.id, nombre)
+      toast.success('Grupo actualizado.')
+      refetchGrupos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
+  const handleEliminarGrupo = async (grupo: GrupoFaseUi) => {
+    if (!confirmarCambioGrupo(grupo)) return
+    setGrupoLoading(true)
+    try {
+      await deleteGrupoVacio(grupo.id)
+      toast.success('Grupo eliminado.')
+      refetchGrupos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
+  const handleAgregarEquipoGrupo = async (grupo: GrupoFaseUi) => {
+    if (!faseActualFixture || !confirmarCambioGrupo(grupo)) return
+    const equipoId = grupoEquipoDraft[grupo.id]
+    if (!equipoId) {
+      toast.error('Selecciona un equipo.')
+      return
+    }
+    setGrupoLoading(true)
+    try {
+      await agregarEquipoAGrupo(faseActualFixture.id, grupo.id, equipoId)
+      setGrupoEquipoDraft((prev) => ({ ...prev, [grupo.id]: '' }))
+      toast.success('Equipo agregado al grupo.')
+      refetchGrupos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
+  const handleQuitarEquipoGrupo = async (grupo: GrupoFaseUi, item: GrupoEquipoUi) => {
+    if (!confirmarCambioGrupo(grupo)) return
+    setGrupoLoading(true)
+    try {
+      await quitarEquipoDeGrupo(item.id)
+      toast.success('Equipo quitado del grupo.')
+      refetchGrupos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
+  const handleMoverEquipoGrupo = async (grupo: GrupoFaseUi, item: GrupoEquipoUi) => {
+    if (!faseActualFixture || !confirmarCambioGrupo(grupo)) return
+    const targetGrupoId = grupoMoverDraft[item.id]
+    if (!targetGrupoId || targetGrupoId === item.grupoId) {
+      toast.error('Selecciona un grupo destino distinto.')
+      return
+    }
+    setGrupoLoading(true)
+    try {
+      await moverEquipoAGrupo(faseActualFixture.id, item.id, item.equipoId, targetGrupoId)
+      setGrupoMoverDraft((prev) => ({ ...prev, [item.id]: '' }))
+      toast.success('Equipo movido.')
+      refetchGrupos()
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
   const ejecutarGenerarFixture = async () => {
     if (!selectedCategoria || !torneoId) {
       toast.error('Selecciona una categoría.')
-      return
-    }
-    if (categoriaActiva?.formato && categoriaActiva.formato !== 'todos_contra_todos') {
-      toast.error('Por ahora solo se puede generar automáticamente el fixture en formato "Todos contra todos".')
       return
     }
     setGenerandoFixture(true)
@@ -515,15 +721,40 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.error('Se necesitan al menos dos equipos en la categoría para generar el fixture.')
         return
       }
-      const nPar = await countPartidosEnCategoria(selectedCategoria)
+      const faseObjetivo = faseActualFixture
+      const tipoFase = String(faseObjetivo?.tipo ?? 'todos_contra_todos')
+
+      if (faseObjetivo && isFasePorGrupos(tipoFase)) {
+        try {
+          await validarGruposAntesDeFixture(faseObjetivo.id)
+        } catch (e) {
+          const msg = translateUserError(e, 'fixture')
+          toast.error(msg)
+          if (msg.includes('Primero debes crear los grupos')) setActiveTab('grupos')
+          return
+        }
+        await generarFixtureGruposFase(faseObjetivo.id, false)
+        toast.success('Fixture por grupos generado.')
+        setFixtureOpen(false)
+        invalidatePartidos()
+        void refetchFixtureGrupos()
+        void refetchGruposFase()
+        return
+      }
+
+      if (faseObjetivo && tipoFase !== 'todos_contra_todos') {
+        toast.error('Este tipo de fase todavía no tiene generación automática de fixture.')
+        return
+      }
+
+      const nPar = faseObjetivo ? await countPartidosEnFase(faseObjetivo.id) : await countPartidosEnCategoria(selectedCategoria)
       if (nPar > 0) {
-        toast.error('Esta categoría ya tiene partidos en el fixture.')
+        toast.error(faseObjetivo ? 'Esta fase ya tiene fixture generado.' : 'Esta categoría ya tiene partidos en el fixture.')
         return
       }
       await generarFixtureCategoria(selectedCategoria)
-      const faseActiva = fasesList.find((f) => f.activa) ?? fasesList[0]
-      if (faseActiva) {
-        await assignPartidosCategoriaSinFase(selectedCategoria, faseActiva.id)
+      if (faseObjetivo) {
+        await assignPartidosCategoriaSinFase(selectedCategoria, faseObjetivo.id)
       }
       toast.success('Fixture generado.')
       setFixtureOpen(false)
@@ -730,10 +961,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       <Dialog open={fixtureOpen} onOpenChange={setFixtureOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Generar fixture (todos contra todos)</DialogTitle>
+            <DialogTitle>Generar fixture</DialogTitle>
             <DialogDescription>
-              Se crearán las jornadas y los enfrentamientos en la categoría seleccionada. La fecha y hora de juego se
-              asignan después en Sorteo de horarios.
+              {fixtureEsPorGrupos
+                ? 'Se crearán jornadas dentro de cada grupo de la fase seleccionada. La fecha y hora se asignan después en Sorteo de horarios.'
+                : 'Se crearán las jornadas y los enfrentamientos en la categoría seleccionada. La fecha y hora de juego se asignan después en Sorteo de horarios.'}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1136,17 +1368,87 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   </Button>
                 </div>
               )}
-              {categoriaActiva?.formato && categoriaActiva.formato !== 'todos_contra_todos' && (
+              {fixtureEsPorGrupos && (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  Formato {categoriaActiva.formato}: la generación automática del fixture es próximamente; puedes crear
-                  partidos manualmente.
+                  Esta fase genera fixture todos contra todos dentro de cada grupo. Si faltan grupos o equipos asignados,
+                  usa la pestaña Grupos antes de generar.
                 </p>
               )}
             </CardContent>
           </Card>
 
-          {parLoading ? (
+          {parLoading || (fixtureEsPorGrupos && gruposLoading) ? (
             <Skeleton className="h-64 w-full" />
+          ) : fixtureEsPorGrupos ? (
+            fixtureGrupos.length === 0 ? (
+              <EmptyState
+                icon={Calendar}
+                title="Sin fixture por grupos"
+                description="Primero crea los grupos, asigna equipos y luego genera el fixture de esta fase."
+                action={
+                  <Button type="button" variant="default" onClick={() => setActiveTab('grupos')}>
+                    Ir a Grupos
+                  </Button>
+                }
+              />
+            ) : (
+              fixtureGruposPorGrupo.map((grupo) => {
+                const jornadasGrupo = [...new Set(grupo.partidos.map((p) => p.jornada))].sort((a, b) => a - b)
+                return (
+                  <Card key={grupo.key}>
+                    <CardHeader>
+                      <CardTitle className="text-lg">{grupo.nombre}</CardTitle>
+                      <CardDescription>{grupo.partidos.length} partidos</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {jornadasGrupo.map((jornada) => {
+                        const partidosJornada = grupo.partidos.filter((p) => p.jornada === jornada)
+                        return (
+                          <div key={`${grupo.key}-${jornada}`} className="rounded-md border p-3">
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              <h3 className="text-sm font-semibold">Jornada {jornada}</h3>
+                              <span className="text-xs text-muted-foreground">{partidosJornada.length} partidos</span>
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                              {partidosJornada.map((partido) => {
+                                const jugado = isJugadoEstado(partido.estado)
+                                const programado = Boolean(partido.fecha || partido.hora || partido.cancha) && !jugado
+                                return (
+                                  <div key={partido.partidoId} className="rounded-md border bg-card p-4">
+                                    <p className="mb-3 text-xs text-muted-foreground">Orden {partido.orden ?? 0}</p>
+                                    <div className="mb-3 flex items-center justify-between gap-3 text-sm font-medium">
+                                      <span className="min-w-0 flex-1 truncate">{partido.equipoLocalNombre}</span>
+                                      <span className="shrink-0 text-muted-foreground">vs</span>
+                                      <span className="min-w-0 flex-1 truncate text-right">{partido.equipoVisitanteNombre}</span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                                      {jugado ? (
+                                        <Badge>Jugado</Badge>
+                                      ) : programado ? (
+                                        <Badge variant="secondary">Programado</Badge>
+                                      ) : (
+                                        <Badge variant="outline">Pendiente de programar</Badge>
+                                      )}
+                                    </div>
+                                    {partido.fecha || partido.hora || partido.cancha ? (
+                                      <p className="mt-2 text-xs text-muted-foreground">
+                                        {partido.fecha ? formatDate(partido.fecha) : ''}
+                                        {partido.hora ? ` · ${partido.hora}` : ''}
+                                        {partido.cancha ? ` · ${partido.cancha}` : ''}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </CardContent>
+                  </Card>
+                )
+              })
+            )
           ) : partidosCategoria.length === 0 ? (
             <EmptyState
               icon={Calendar}
@@ -1457,7 +1759,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <CardHeader>
               <CardTitle>Grupos por fase</CardTitle>
               <CardDescription>
-                Preparado para fases de grupos y cuadrangulares. No se guardan cambios porque la base aún no expone tablas de grupos.
+                Administra grupos, cuadrangulares y equipos antes de generar el fixture por grupo.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1479,12 +1781,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 </div>
                 <div className="space-y-1">
                   <Label>Fase</Label>
-                  <Select value={selectedFixtureFase || '__all__'} onValueChange={(v) => setSelectedFixtureFase(v === '__all__' ? '' : v)}>
+                  <Select value={faseActualFixture?.id ?? '__none__'} onValueChange={(v) => setSelectedFixtureFase(v === '__none__' ? '' : v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Fase" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__all__">Selecciona una fase</SelectItem>
+                      <SelectItem value="__none__">Selecciona una fase</SelectItem>
                       {fasesList.map((f) => (
                         <SelectItem key={f.id} value={f.id}>
                           {f.nombre}
@@ -1498,27 +1800,167 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <Input type="number" min={1} value={grupoCantidad} onChange={(e) => setGrupoCantidad(e.target.value)} />
                 </div>
               </div>
-              <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-                <div className="space-y-1">
-                  <Label>Asignación de equipos</Label>
-                  <Select value={grupoAsignacion} onValueChange={setGrupoAsignacion}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="aleatoria">Aleatoria</SelectItem>
-                      <SelectItem value="manual">Manual</SelectItem>
-                    </SelectContent>
-                  </Select>
+
+              {!faseActualFixture ? (
+                <div className="rounded-md border p-4 text-sm text-muted-foreground">
+                  Selecciona una fase para administrar sus grupos.
                 </div>
-                <Button type="button" disabled variant="outline">
-                  Repartir equipos
-                </Button>
-              </div>
-              <div className="rounded-md border border-warning/40 bg-warning/10 p-4 text-sm">
-                Para habilitar crear grupo, editar nombre, mover equipos, eliminar grupos vacíos y generar fixture por grupo,
-                se requiere persistencia en Supabase: grupos_fase, grupo_equipos y partidos.grupo_id.
-              </div>
+              ) : !fixtureEsPorGrupos ? (
+                <div className="rounded-md border p-4 text-sm text-muted-foreground">
+                  Esta fase no se juega por grupos.
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
+                    <div className="space-y-1">
+                      <Label>Asignación de equipos</Label>
+                      <Select value={grupoAsignacion} onValueChange={setGrupoAsignacion}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="aleatoria">Aleatoria</SelectItem>
+                          <SelectItem value="manual">Manual</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button type="button" variant="outline" disabled={grupoLoading} onClick={() => void handleCrearGrupos()}>
+                      Crear grupos
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={grupoLoading || grupoAsignacion !== 'aleatoria'}
+                      onClick={() => void handleRepartirEquipos()}
+                    >
+                      Repartir equipos
+                    </Button>
+                  </div>
+
+                  {gruposLoading ? (
+                    <Skeleton className="h-40 w-full" />
+                  ) : gruposFase.length === 0 ? (
+                    <EmptyState
+                      icon={Layers}
+                      title="Sin grupos"
+                      description="Primero debes crear los grupos de esta fase."
+                      action={
+                        <Button type="button" onClick={() => void handleCrearGrupos()}>
+                          Crear grupos
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {gruposFase.map((grupo) => {
+                        const equiposGrupo = grupoEquiposPorGrupo.get(grupo.id) ?? []
+                        return (
+                          <Card key={grupo.id}>
+                            <CardHeader className="space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <CardTitle className="text-lg">{grupo.nombre}</CardTitle>
+                                  <CardDescription>
+                                    {equiposGrupo.length} equipos
+                                    {grupo.partidosJugados > 0 ? ` · ${grupo.partidosJugados} partidos jugados` : ''}
+                                  </CardDescription>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive"
+                                  disabled={grupoLoading || equiposGrupo.length > 0}
+                                  onClick={() => void handleEliminarGrupo(grupo)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                              <div className="flex gap-2">
+                                <Input
+                                  value={grupoNombresDraft[grupo.id] ?? grupo.nombre}
+                                  onChange={(e) => setGrupoNombresDraft((prev) => ({ ...prev, [grupo.id]: e.target.value }))}
+                                />
+                                <Button type="button" variant="outline" disabled={grupoLoading} onClick={() => void handleRenombrarGrupo(grupo)}>
+                                  Guardar
+                                </Button>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                              <div className="space-y-2">
+                                {equiposGrupo.length === 0 ? (
+                                  <p className="text-sm text-muted-foreground">Grupo vacío.</p>
+                                ) : (
+                                  equiposGrupo.map((item) => (
+                                    <div key={item.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+                                      <TeamAvatar
+                                        nombre={item.equipoNombre}
+                                        color={item.equipoColor ?? '#64748b'}
+                                        logoUrl={item.logoUrl}
+                                        logoPublicId={item.logoPublicId}
+                                      />
+                                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.equipoNombre}</span>
+                                      <Select
+                                        value={grupoMoverDraft[item.id] || '__none__'}
+                                        onValueChange={(v) => setGrupoMoverDraft((prev) => ({ ...prev, [item.id]: v === '__none__' ? '' : v }))}
+                                      >
+                                        <SelectTrigger className="w-40">
+                                          <SelectValue placeholder="Mover a" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="__none__">Mover a...</SelectItem>
+                                          {gruposFase
+                                            .filter((g) => g.id !== item.grupoId)
+                                            .map((g) => (
+                                              <SelectItem key={g.id} value={g.id}>
+                                                {g.nombre}
+                                              </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                      </Select>
+                                      <Button type="button" variant="outline" size="sm" disabled={grupoLoading} onClick={() => void handleMoverEquipoGrupo(grupo, item)}>
+                                        Mover
+                                      </Button>
+                                      <Button type="button" variant="ghost" size="sm" disabled={grupoLoading} onClick={() => void handleQuitarEquipoGrupo(grupo, item)}>
+                                        Quitar
+                                      </Button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+
+                              <div className="flex flex-wrap items-end gap-2 border-t pt-3">
+                                <div className="min-w-56 flex-1 space-y-1">
+                                  <Label>Agregar equipo</Label>
+                                  <Select
+                                    value={grupoEquipoDraft[grupo.id] || '__none__'}
+                                    onValueChange={(v) => setGrupoEquipoDraft((prev) => ({ ...prev, [grupo.id]: v === '__none__' ? '' : v }))}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Equipo" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">Selecciona equipo</SelectItem>
+                                      {equiposDisponiblesParaGrupo.map((equipo) => (
+                                        <SelectItem key={equipo.id} value={equipo.id}>
+                                          {equipo.nombre}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <Button type="button" disabled={grupoLoading} onClick={() => void handleAgregarEquipoGrupo(grupo)}>
+                                  Agregar
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
