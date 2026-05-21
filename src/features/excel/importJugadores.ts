@@ -1,7 +1,7 @@
 import { getCategoriaById } from '@/features/categorias/categoriasService'
 import { getEquipoById } from '@/features/equipos/equiposService'
 import { createJugadorConEquipo } from '@/features/jugadores/jugadoresService'
-import { pickCell } from '@/features/excel/parseSheet'
+import { hasCellValue, pickCell, pickRawCell } from '@/features/excel/parseSheet'
 import { translateUserError } from '@/lib/errorMessages'
 import { validarEdadCategoria } from '@/lib/jugadorEdad'
 import { parseDateFlexible } from '@/lib/parseDateFlexible'
@@ -34,14 +34,16 @@ export async function importJugadoresFromRows(
     const row = rows[i]!
     const fila = i + 2
     const nombreCompleto = pickCell(row, 'nombre_completo', 'nombre', 'jugador', 'full_name', 'nombres')
-    const documento = pickCell(row, 'documento', 'doc', 'cedula', 'dni', 'id')
+    const documento = pickCell(row, 'documento', 'doc', 'cedula', 'dni')
     const anioStr = pickCell(row, 'anio_nacimiento', 'año_nacimiento', 'ano_nacimiento', 'año', 'anio', 'year')
-    const fechaNacRaw = pickCell(row, 'fecha_nacimiento', 'fecha nacimiento', 'birthdate')
+    const fechaNacRaw = pickRawCell(row, 'fecha_nacimiento', 'fecha nacimiento', 'birthdate')
     const fechaIso = parseDateFlexible(fechaNacRaw)
-    if (fechaNacRaw.trim() && !fechaIso) {
-      errores.push({ fila, mensaje: 'fecha_nacimiento no reconocida. Usa YYYY-MM-DD o DD/MM/YYYY.' })
+
+    if (hasCellValue(row, 'fecha_nacimiento', 'fecha nacimiento', 'birthdate') && !fechaIso) {
+      errores.push({ fila, mensaje: 'La fecha del jugador no tiene un formato válido.' })
       continue
     }
+
     let anio = Number(anioStr)
     if (fechaIso) {
       anio = Number(fechaIso.slice(0, 4))
@@ -58,7 +60,7 @@ export async function importJugadoresFromRows(
       continue
     }
     if (!fechaIso && (!anioStr || Number.isNaN(anio) || anio < 1900 || anio > new Date().getFullYear())) {
-      errores.push({ fila, mensaje: 'Indica año de nacimiento o fecha de nacimiento válida.' })
+      errores.push({ fila, mensaje: 'La fecha del jugador no tiene un formato válido.' })
       continue
     }
 
@@ -94,7 +96,7 @@ export async function importJugadoresFromRows(
       if (msg.includes('Ya existe un jugador con ese documento')) {
         omitidos.push(`${documento} (${nombreCompleto})`)
       } else {
-        errores.push({ fila, mensaje: msg })
+        errores.push({ fila, mensaje: `No se pudo importar la fila ${fila}. Revisa los datos.` })
       }
     }
   }

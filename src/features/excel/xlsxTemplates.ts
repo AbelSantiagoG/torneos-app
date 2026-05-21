@@ -9,7 +9,7 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-/** Plantilla equipos: nombre, sigla, color, observaciones, logo_url (sin categoría). */
+/** Plantilla equipos: nombre, sigla, color, observaciones, logo_url (sin categoria). */
 export function downloadPlantillaEquiposXlsx() {
   const rows = [
     ['nombre', 'sigla', 'color', 'observaciones', 'logo_url'],
@@ -27,13 +27,13 @@ export function downloadPlantillaEquiposXlsx() {
   )
 }
 
-/** Plantilla jugadores: nombre_completo, documento, anio_nacimiento, fecha_nacimiento, foto_url, observaciones. */
+/** Plantilla jugadores: nombre_completo, documento, fecha_nacimiento, foto_url, observaciones. */
 export function downloadPlantillaJugadoresXlsx() {
   const rows = [
-    ['nombre_completo', 'documento', 'anio_nacimiento', 'fecha_nacimiento', 'foto_url', 'observaciones'],
-    ['Tomás Pérez', '109876544', 2017, '2017-04-15', '', ''],
-    ['Emilio Sánchez', '109876545', 2017, '2017-06-22', '', ''],
-    ['Gabriel Ruiz', '109876546', 2016, '2016-11-03', '', ''],
+    ['nombre_completo', 'documento', 'fecha_nacimiento', 'foto_url', 'observaciones'],
+    ['Tomás Pérez', '109876544', '2014-01-10', '', ''],
+    ['Emilio Sánchez', '109876545', '10/01/2014', '', ''],
+    ['Gabriel Ruiz', '109876546', '2014/01/10', '', ''],
   ]
   const ws = XLSX.utils.aoa_to_sheet(rows)
   const wb = XLSX.utils.book_new()

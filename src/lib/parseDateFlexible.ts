@@ -60,6 +60,14 @@ export function parseDateFlexible(value: unknown): string | null {
   const s = String(value).trim()
   if (!s) return null
 
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s)
+    if (Number.isFinite(n) && Number.isInteger(n) && n > 20000 && n < 80000) {
+      const fromSerial = fromExcelSerial(n)
+      if (fromSerial) return fromSerial
+    }
+  }
+
   let m = s.match(ISO_YMD)
   if (m) {
     return toIso(Number(m[1]), Number(m[2]), Number(m[3]))

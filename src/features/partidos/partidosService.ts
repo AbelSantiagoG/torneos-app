@@ -3,6 +3,7 @@ import { throwOnError } from '@/features/_shared/supabaseHelpers'
 import { toUserError } from '@/lib/supabaseErrors'
 import { formatHoraUi, HORA_FRANJAS_PREDETERMINADAS, normalizeHoraDb } from '@/features/horarios/horariosService'
 import { mapVwPartidoRow, type PartidoDashboardUi } from '@/features/partidos/partidosUi'
+import { deletePartidoCascade as deletePartidoCascadeInternal } from '@/features/partidos/partidoCleanup'
 
 export { deletePartidoCascade } from '@/features/partidos/partidoCleanup'
 
@@ -24,6 +25,47 @@ type PartidoRowDb = {
   equipo_local_id: string
   equipo_visitante_id: string
   fase_torneo_id?: string | null
+}
+
+const DUPLICATE_MATCH_MSG = 'Este partido ya existe en otra jornada. Solo puede repetirse si el torneo es de ida y vuelta.'
+
+function sameFixtureFase(a?: string | null, b?: string | null): boolean {
+  return (a || null) === (b || null)
+}
+
+function sameUnorderedMatch(aLocal: string, aVisit: string, bLocal: string, bVisit: string): boolean {
+  return (
+    (aLocal === bLocal && aVisit === bVisit) ||
+    (aLocal === bVisit && aVisit === bLocal)
+  )
+}
+
+async function assertPartidoFixtureValido(input: {
+  categoria_id: string
+  equipo_local_id: string
+  equipo_visitante_id: string
+  fase_torneo_id?: string | null
+  excluirPartidoId?: string | null
+  permiteIdaVuelta?: boolean
+}): Promise<void> {
+  if (!input.equipo_local_id || !input.equipo_visitante_id || input.equipo_local_id === input.equipo_visitante_id) {
+    throw new Error('Selecciona equipos local y visitante distintos.')
+  }
+  if (input.permiteIdaVuelta) return
+
+  const r = await supabase
+    .from('partidos')
+    .select('id, jornada, equipo_local_id, equipo_visitante_id, fase_torneo_id')
+    .eq('categoria_id', input.categoria_id)
+  if (r.error) throw toUserError(r.error, 'fixture')
+
+  const rows = (r.data ?? []) as Pick<PartidoRowDb, 'id' | 'jornada' | 'equipo_local_id' | 'equipo_visitante_id' | 'fase_torneo_id'>[]
+  const duplicate = rows.some((row) => {
+    if (input.excluirPartidoId && row.id === input.excluirPartidoId) return false
+    if (!sameFixtureFase(row.fase_torneo_id, input.fase_torneo_id)) return false
+    return sameUnorderedMatch(input.equipo_local_id, input.equipo_visitante_id, row.equipo_local_id, row.equipo_visitante_id)
+  })
+  if (duplicate) throw new Error(DUPLICATE_MATCH_MSG)
 }
 
 function addMinutesToTime(hora: string, mins: number): string {
@@ -375,6 +417,20 @@ export type PartidoFixturePatch = {
 }
 
 export async function updatePartido(partidoId: string, patch: PartidoFixturePatch): Promise<void> {
+  const currentRes = await supabase
+    .from('partidos')
+    .select('id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id')
+    .eq('id', partidoId)
+    .single()
+  if (currentRes.error) throw toUserError(currentRes.error, 'fixture')
+  const current = currentRes.data as PartidoRowDb
+  await assertPartidoFixtureValido({
+    categoria_id: current.categoria_id,
+    equipo_local_id: patch.equipo_local_id ?? current.equipo_local_id,
+    equipo_visitante_id: patch.equipo_visitante_id ?? current.equipo_visitante_id,
+    fase_torneo_id: current.fase_torneo_id ?? null,
+    excluirPartidoId: partidoId,
+  })
   const r = await supabase.from('partidos').update(patch).eq('id', partidoId)
   if (r.error) throw toUserError(r.error, 'fixture')
 }
@@ -392,6 +448,12 @@ export type PartidoInsertInput = {
 
 export async function createPartidoManual(input: PartidoInsertInput): Promise<string> {
   const j = input.jornada ?? 1
+  await assertPartidoFixtureValido({
+    categoria_id: input.categoria_id,
+    equipo_local_id: input.equipo_local_id,
+    equipo_visitante_id: input.equipo_visitante_id,
+    fase_torneo_id: input.fase_torneo_id ?? null,
+  })
   let orden = 0
   if (input.orden != null && !Number.isNaN(Number(input.orden)) && Number(input.orden) > 0) {
     orden = Number(input.orden)
@@ -499,6 +561,90 @@ export async function upsertProgramacion(
 export async function deleteProgramacion(programacionId: string): Promise<void> {
   const r = await supabase.from('programaciones_partido').delete().eq('id', programacionId)
   if (r.error) throw toUserError(r.error, 'programacion')
+}
+
+async function countByPartidos(table: string, partidoIds: string[]): Promise<number> {
+  if (!partidoIds.length) return 0
+  const r = await supabase.from(table).select('id', { count: 'exact', head: true }).in('partido_id', partidoIds)
+  if (r.error) throw toUserError(r.error, 'fixture')
+  return r.count ?? 0
+}
+
+export type JornadaDeleteSummary = {
+  partidos: number
+  jugados: number
+  programaciones: number
+  actas: number
+  goles: number
+  tarjetas: number
+  tieneInformacionAsociada: boolean
+}
+
+export async function getJornadaDeleteSummary(params: {
+  categoriaId: string
+  jornada: number
+  faseTorneoId?: string | null
+}): Promise<JornadaDeleteSummary> {
+  let q = supabase
+    .from('partidos')
+    .select('id, estado, fase_torneo_id')
+    .eq('categoria_id', params.categoriaId)
+    .eq('jornada', params.jornada)
+
+  const r = await q
+  if (r.error) throw toUserError(r.error, 'fixture')
+  const rows = ((r.data ?? []) as { id: string; estado: string; fase_torneo_id?: string | null }[]).filter((row) =>
+    params.faseTorneoId ? sameFixtureFase(row.fase_torneo_id ?? null, params.faseTorneoId) : true,
+  )
+  const ids = rows.map((row) => row.id)
+  const [programaciones, actas, goles, tarjetas] = await Promise.all([
+    countByPartidos('programaciones_partido', ids),
+    countByPartidos('actas_partido', ids),
+    countByPartidos('goles', ids),
+    countByPartidos('tarjetas', ids),
+  ])
+  const jugados = rows.filter((row) => row.estado?.toLowerCase().includes('jugad') || row.estado === 'finalizado').length
+  return {
+    partidos: ids.length,
+    jugados,
+    programaciones,
+    actas,
+    goles,
+    tarjetas,
+    tieneInformacionAsociada: jugados > 0 || programaciones > 0 || actas > 0 || goles > 0 || tarjetas > 0,
+  }
+}
+
+export async function deleteJornadaCompleta(params: {
+  categoriaId: string
+  jornada: number
+  faseTorneoId?: string | null
+}): Promise<void> {
+  const r = await supabase
+    .from('partidos')
+    .select('id, fase_torneo_id')
+    .eq('categoria_id', params.categoriaId)
+    .eq('jornada', params.jornada)
+  if (r.error) throw toUserError(r.error, 'fixture')
+  const ids = ((r.data ?? []) as { id: string; fase_torneo_id?: string | null }[])
+    .filter((row) => (params.faseTorneoId ? sameFixtureFase(row.fase_torneo_id ?? null, params.faseTorneoId) : true))
+    .map((row) => row.id)
+
+  for (const id of ids) {
+    await deletePartidoCascadeInternal(id)
+  }
+}
+
+export async function updatePartidosJornada(
+  updates: { id: string; jornada: number; orden: number }[],
+): Promise<void> {
+  for (const update of updates) {
+    const r = await supabase
+      .from('partidos')
+      .update({ jornada: update.jornada, orden: update.orden })
+      .eq('id', update.id)
+    if (r.error) throw toUserError(r.error, 'fixture')
+  }
 }
 
 function addDaysToIsoDate(isoDate: string, days: number): string {

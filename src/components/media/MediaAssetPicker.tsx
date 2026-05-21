@@ -50,7 +50,7 @@ export function MediaAssetPicker({ open, onOpenChange, torneoId, tipo, onSelect 
             Biblioteca de imágenes
           </DialogTitle>
           <DialogDescription>
-            Imágenes ya subidas para este torneo ({TIPO_LABEL[tipo]}). Elige una para reutilizar su URL y public_id.
+            Imágenes ya subidas para este torneo ({TIPO_LABEL[tipo]}). Elige una para reutilizarla.
           </DialogDescription>
         </DialogHeader>
 

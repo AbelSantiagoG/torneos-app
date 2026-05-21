@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Trophy, Target, AlertTriangle } from 'lucide-react'
+import { Trophy, Target, AlertTriangle, ArrowDown, ArrowUp } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
@@ -29,7 +30,10 @@ import { getDashboardCounts } from '@/features/dashboard/dashboardService'
 import {
   fetchEstadisticasFiltradas,
   formatVistaCell,
+  CRITERIOS_CLASIFICACION,
+  ordenarTablaPorCriterios,
   rowKeysForTable,
+  type CriterioClasificacion,
   type VistaRow,
 } from '@/features/estadisticas/estadisticasService'
 import { listFasesPorCategoria } from '@/features/fases/fasesTorneoService'
@@ -51,6 +55,16 @@ export function EstadisticasPage() {
   const [selectedCategoria, setSelectedCategoria] = useState('')
   const [selectedFase, setSelectedFase] = useState('')
   const [activeTab, setActiveTab] = useState('posiciones')
+  const [criterios, setCriterios] = useState<CriterioClasificacion[]>([
+    'puntos',
+    'diferencia_gol',
+    'goles_favor',
+    'goles_contra',
+    'fair_play',
+    'partidos_directos',
+    'partidos_ganados',
+    'sorteo_manual',
+  ])
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
@@ -89,13 +103,27 @@ export function EstadisticasPage() {
     if (statsError) toast.error(statsError instanceof Error ? statsError.message : 'Error al cargar estadísticas')
   }, [statsError])
 
-  const tabla = statsData?.tabla ?? []
+  const tabla = useMemo(
+    () => ordenarTablaPorCriterios(statsData?.tabla ?? [], criterios),
+    [statsData?.tabla, criterios],
+  )
   const goleadores = statsData?.goleadores ?? []
   const disciplina = statsData?.disciplina ?? []
 
   const tablaKeys = useMemo(() => rowKeysForTable(tabla), [tabla])
   const goleadoresKeys = useMemo(() => rowKeysForTable(goleadores), [goleadores])
   const disciplinaKeys = useMemo(() => rowKeysForTable(disciplina), [disciplina])
+
+  const moveCriterio = (idx: number, dir: -1 | 1) => {
+    setCriterios((prev) => {
+      const next = [...prev]
+      const target = idx + dir
+      if (target < 0 || target >= next.length) return prev
+      const [item] = next.splice(idx, 1)
+      next.splice(target, 0, item!)
+      return next
+    })
+  }
 
   const categoria = categorias.find((c) => c.id === selectedCategoria)
   const partidosJugados = countsQ.data?.partidosJugados ?? 0
@@ -205,6 +233,53 @@ export function EstadisticasPage() {
                     </CardContent>
                   </Card>
                 )}
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Criterios de clasificación</CardTitle>
+                    <CardDescription>
+                      Orden aplicado en esta pantalla. Falta persistirlo en Supabase para que quede guardado por categoría o fase.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {criterios.map((criterio, idx) => {
+                        const label = CRITERIOS_CLASIFICACION.find((c) => c.id === criterio)?.label ?? criterio
+                        return (
+                          <div key={criterio} className="flex items-center justify-between rounded-md border px-3 py-2">
+                            <span className="text-sm font-medium">
+                              {idx + 1}. {label}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                disabled={idx === 0}
+                                onClick={() => moveCriterio(idx, -1)}
+                                aria-label="Subir criterio"
+                              >
+                                <ArrowUp className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                disabled={idx === criterios.length - 1}
+                                onClick={() => moveCriterio(idx, 1)}
+                                aria-label="Bajar criterio"
+                              >
+                                <ArrowDown className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
 
                 <Card>
                   <CardHeader>

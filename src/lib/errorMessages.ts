@@ -35,6 +35,9 @@ function combinedText(e: PgLike): string {
 /** Traduce errores de Supabase/Postgres/Cloudinary/RPC a texto legible. */
 export function translateUserError(error: unknown, context: UserErrorContext = 'default'): string {
   const rawMsg = String((error as Error)?.message ?? '').trim()
+  if (rawMsg.includes('Este partido ya existe en otra jornada')) {
+    return 'Este partido ya existe en otra jornada. Solo puede repetirse si el torneo es de ida y vuelta.'
+  }
   if (rawMsg.includes('Ya existe un partido programado en esa cancha durante ese horario')) {
     return 'Ya existe un partido programado en esa cancha durante ese horario.'
   }
@@ -75,6 +78,14 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
 
   if (code === '23502' || text.includes('not-null constraint') || text.includes('null value in column')) {
     return 'Falta completar un campo obligatorio.'
+  }
+
+  if (text.includes('time zone displacement out of range')) {
+    return 'La fecha del jugador no tiene un formato válido.'
+  }
+
+  if (text.includes('invalid input')) {
+    return 'Hay un dato con formato inválido. Revisa la información e intenta de nuevo.'
   }
 
   if (text.includes('invalid input value for enum')) {

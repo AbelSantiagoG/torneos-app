@@ -94,6 +94,7 @@ export interface Jugador {
   nombre: string
   documento: string
   anioNacimiento: number
+  fechaNacimiento?: string | null
   equipoId: string
   categoriaId: string
   estado: 'activo' | 'advertencia' | 'inactivo'

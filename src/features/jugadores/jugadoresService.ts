@@ -47,6 +47,7 @@ function mapJugadorUi(row: JugadorRow, equipoId: string, categoriaId: string): J
     nombre: row.nombre_completo,
     documento: row.documento?.trim() || '—',
     anioNacimiento: anio,
+    fechaNacimiento: row.fecha_nacimiento,
     equipoId,
     categoriaId,
     estado,

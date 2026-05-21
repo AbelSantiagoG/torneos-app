@@ -882,7 +882,7 @@ export function EquiposPage() {
                   <TableHead>Jugador</TableHead>
                   <TableHead>Equipo</TableHead>
                   <TableHead>Documento</TableHead>
-                  <TableHead>Año Nacimiento</TableHead>
+                  <TableHead>Nacimiento</TableHead>
                   <TableHead>Estado</TableHead>
                 </TableRow>
               </TableHeader>
@@ -914,7 +914,7 @@ export function EquiposPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{jugador.documento}</TableCell>
-                    <TableCell>{jugador.anioNacimiento}</TableCell>
+                    <TableCell>{jugador.fechaNacimiento ?? jugador.anioNacimiento}</TableCell>
                     <TableCell>
                       {jugador.estado === 'activo' ? (
                         <Badge variant="outline" className="border-success text-success">
@@ -1045,7 +1045,7 @@ export function EquiposPage() {
                     />
                     {playerForm.anioNacimiento && (
                       <p className="text-xs text-muted-foreground">
-                        Año registrado: {playerForm.anioNacimiento}
+                        Fecha normalizada: {playerForm.fechaNacimiento}
                         {edadDesdeAnio(Number(playerForm.anioNacimiento)) > 0 &&
                           ` · Edad aprox.: ${edadDesdeAnio(Number(playerForm.anioNacimiento))} años`}
                       </p>
@@ -1222,7 +1222,7 @@ export function EquiposPage() {
                       <TableCell className="font-medium">{jugador.nombre}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{jugador.documento}</TableCell>
                       <TableCell className="text-sm">
-                        {jugador.anioNacimiento ?? '—'}
+                        {jugador.fechaNacimiento ?? jugador.anioNacimiento ?? '—'}
                       </TableCell>
                       <TableCell className="text-sm">
                         {jugador.anioNacimiento ? edadDesdeAnio(jugador.anioNacimiento) : '—'}

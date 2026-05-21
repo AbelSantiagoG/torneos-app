@@ -54,10 +54,14 @@ import {
   countPartidosEnCategoria,
   generarFixtureCategoria,
   deletePartidoCascade,
+  deleteJornadaCompleta,
   updatePartido,
+  updatePartidosJornada,
   createPartidoManual,
+  getJornadaDeleteSummary,
   upsertProgramacion,
   generarBorradorSorteo,
+  type JornadaDeleteSummary,
   type SorteoBorradorSlot,
 } from '@/features/partidos/partidosService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
@@ -132,6 +136,7 @@ function TeamAvatar({
 export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const qc = useQueryClient()
   const [selectedCategoria, setSelectedCategoria] = useState('')
+  const [selectedFixtureFase, setSelectedFixtureFase] = useState('')
   const [activeTab, setActiveTab] = useState('categoria')
   const [fixtureOpen, setFixtureOpen] = useState(false)
   const [generandoFixture, setGenerandoFixture] = useState(false)
@@ -153,6 +158,17 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [nuevoJornada, setNuevoJornada] = useState('1')
   const [nuevoOrden, setNuevoOrden] = useState('0')
   const [manualFaseId, setManualFaseId] = useState('')
+  const [createJornadaOpen, setCreateJornadaOpen] = useState(false)
+  const [jornadaDraft, setJornadaDraft] = useState('1')
+  const [deleteJornada, setDeleteJornada] = useState<{
+    jornada: number
+    summary: JornadaDeleteSummary
+  } | null>(null)
+  const [deleteJornadaLoading, setDeleteJornadaLoading] = useState(false)
+  const [editJornadaOpen, setEditJornadaOpen] = useState(false)
+  const [editJornadaRows, setEditJornadaRows] = useState<
+    { id: string; label: string; jornada: string; orden: string }[]
+  >([])
   const [faseDialogOpen, setFaseDialogOpen] = useState(false)
   const [siguienteFaseOpen, setSiguienteFaseOpen] = useState(false)
   const [faseNombre, setFaseNombre] = useState('')
@@ -215,14 +231,25 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setSorteoDrafts({})
   }, [sorteoCategoria])
 
+  useEffect(() => {
+    setSelectedFixtureFase('')
+  }, [selectedCategoria])
+
   const categoriaActiva = useMemo(
     () => categorias.find((c) => c.id === selectedCategoria),
     [categorias, selectedCategoria],
   )
 
   const partidosCategoria = useMemo(
-    () => (selectedCategoria ? fixture.filter((p) => p.categoriaId === selectedCategoria) : []),
-    [fixture, selectedCategoria],
+    () =>
+      selectedCategoria
+        ? fixture.filter(
+            (p) =>
+              p.categoriaId === selectedCategoria &&
+              (!selectedFixtureFase || (p.faseTorneoId ?? '') === selectedFixtureFase),
+          )
+        : [],
+    [fixture, selectedCategoria, selectedFixtureFase],
   )
 
   const partidosSorteo = useMemo(
@@ -276,6 +303,98 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setFaseOrden('')
     setFaseDescripcion('')
     setFaseReinicia(false)
+  }
+
+  const openCrearJornada = () => {
+    const next = jornadas.length ? Math.max(...jornadas) + 1 : 1
+    setJornadaDraft(String(next))
+    setCreateJornadaOpen(true)
+  }
+
+  const confirmarCrearJornada = () => {
+    const jornada = Number(jornadaDraft)
+    if (!Number.isInteger(jornada) || jornada < 1) {
+      toast.error('Indica un número de jornada válido.')
+      return
+    }
+    setNuevoJornada(String(jornada))
+    setNuevoOrden('0')
+    setManualFaseId(selectedFixtureFase)
+    setCreateJornadaOpen(false)
+    setCreateOpen(true)
+  }
+
+  const openCrearPartidoEnJornada = (jornada: number) => {
+    setNuevoJornada(String(jornada))
+    setNuevoOrden('0')
+    setManualFaseId(selectedFixtureFase)
+    setCreateOpen(true)
+  }
+
+  const openDeleteJornada = async (jornada: number) => {
+    if (!selectedCategoria) return
+    setDeleteJornadaLoading(true)
+    try {
+      const summary = await getJornadaDeleteSummary({
+        categoriaId: selectedCategoria,
+        jornada,
+        faseTorneoId: selectedFixtureFase || null,
+      })
+      setDeleteJornada({ jornada, summary })
+    } catch (e) {
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setDeleteJornadaLoading(false)
+    }
+  }
+
+  const confirmarDeleteJornada = async () => {
+    if (!selectedCategoria || !deleteJornada) return
+    setDeleteJornadaLoading(true)
+    try {
+      await deleteJornadaCompleta({
+        categoriaId: selectedCategoria,
+        jornada: deleteJornada.jornada,
+        faseTorneoId: selectedFixtureFase || null,
+      })
+      toast.success('Jornada eliminada.')
+      setDeleteJornada(null)
+      invalidatePartidos()
+    } catch (e) {
+      toast.error('No se pudo eliminar la jornada porque tiene información asociada.')
+    } finally {
+      setDeleteJornadaLoading(false)
+    }
+  }
+
+  const openEditJornada = (jornada: number, partidos: PartidoListaUi[]) => {
+    setEditJornadaRows(
+      [...partidos]
+        .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
+        .map((p) => ({
+          id: p.id,
+          label: `${p.equipoLocalNombre} vs ${p.equipoVisitanteNombre}`,
+          jornada: String(p.jornada || jornada),
+          orden: String(p.orden ?? 0),
+        })),
+    )
+    setEditJornadaOpen(true)
+  }
+
+  const saveEditJornada = async () => {
+    try {
+      const updates = editJornadaRows.map((row, idx) => ({
+        id: row.id,
+        jornada: Number(row.jornada) || 1,
+        orden: Number(row.orden) || idx + 1,
+      }))
+      await updatePartidosJornada(updates)
+      toast.success('Jornada actualizada.')
+      setEditJornadaOpen(false)
+      invalidatePartidos()
+    } catch (e) {
+      toast.error('No se pudo guardar la jornada.')
+    }
   }
 
   const handleCrearFase = async (esSiguiente = false) => {
@@ -693,6 +812,122 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={createJornadaOpen} onOpenChange={setCreateJornadaOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Crear jornada</DialogTitle>
+            <DialogDescription>
+              La jornada se crea al agregar su primer partido. No se asignan fecha, hora ni cancha desde el fixture.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>Número de jornada</Label>
+            <Input value={jornadaDraft} onChange={(e) => setJornadaDraft(e.target.value)} type="number" min={1} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCreateJornadaOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={confirmarCrearJornada}>
+              Agregar partido
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteJornada)} onOpenChange={(open) => !open && setDeleteJornada(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar jornada {deleteJornada?.jornada}</DialogTitle>
+            <DialogDescription>
+              Se eliminarán todos los partidos de esta jornada en la categoría y fase seleccionadas.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteJornada && (
+            <div className="space-y-3 py-2 text-sm">
+              <p>
+                Partidos a eliminar: <span className="font-medium">{deleteJornada.summary.partidos}</span>
+              </p>
+              {deleteJornada.summary.tieneInformacionAsociada ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+                  Esta jornada tiene información asociada: {deleteJornada.summary.jugados} jugados,{' '}
+                  {deleteJornada.summary.programaciones} programaciones, {deleteJornada.summary.actas} actas,{' '}
+                  {deleteJornada.summary.goles} goles y {deleteJornada.summary.tarjetas} tarjetas.
+                </div>
+              ) : (
+                <p className="text-muted-foreground">No se detectó programación, acta, goles ni tarjetas asociados.</p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteJornada(null)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void confirmarDeleteJornada()}
+              disabled={deleteJornadaLoading}
+            >
+              Eliminar jornada
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editJornadaOpen} onOpenChange={setEditJornadaOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Editar jornada</DialogTitle>
+            <DialogDescription>Cambia el número de jornada y el orden de los partidos incluidos.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto py-2">
+            {editJornadaRows.map((row, idx) => (
+              <div key={row.id} className="grid gap-2 rounded-md border p-3 md:grid-cols-[1fr_7rem_7rem] md:items-end">
+                <div>
+                  <Label>Partido</Label>
+                  <p className="mt-2 text-sm font-medium">{row.label}</p>
+                </div>
+                <div className="space-y-1">
+                  <Label>Jornada</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={row.jornada}
+                    onChange={(e) =>
+                      setEditJornadaRows((prev) =>
+                        prev.map((item, itemIdx) => (itemIdx === idx ? { ...item, jornada: e.target.value } : item)),
+                      )
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Orden</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={row.orden}
+                    onChange={(e) =>
+                      setEditJornadaRows((prev) =>
+                        prev.map((item, itemIdx) => (itemIdx === idx ? { ...item, orden: e.target.value } : item)),
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditJornadaOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={() => void saveEditJornada()}>
+              Guardar jornada
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(progPartido)} onOpenChange={(o) => !o && setProgPartido(null)}>
         <DialogContent>
           <DialogHeader>
@@ -804,12 +1039,37 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Select value={selectedFixtureFase || '__all__'} onValueChange={(v) => setSelectedFixtureFase(v === '__all__' ? '' : v)}>
+                    <SelectTrigger className="w-full md:w-56">
+                      <SelectValue placeholder="Fase" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todas las fases</SelectItem>
+                      {fasesList.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Button type="button" variant="outline" size="sm" onClick={() => setFixtureOpen(true)}>
                     Generar fixture
                   </Button>
-                  <Button type="button" size="sm" onClick={() => setCreateOpen(true)} disabled={!selectedCategoria}>
+                  <Button type="button" variant="outline" size="sm" onClick={openCrearJornada} disabled={!selectedCategoria}>
                     <Plus className="mr-1 h-4 w-4" />
-                    Partido manual
+                    Crear jornada
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      setManualFaseId(selectedFixtureFase)
+                      setCreateOpen(true)
+                    }}
+                    disabled={!selectedCategoria}
+                  >
+                    <Plus className="mr-1 h-4 w-4" />
+                    Crear partido
                   </Button>
                 </div>
               )}
@@ -840,9 +1100,32 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               const partidosJornada = partidosCategoria.filter((p) => p.jornada === jornada)
               return (
                 <Card key={jornada}>
-                  <CardHeader>
-                    <CardTitle className="text-lg">Jornada {jornada}</CardTitle>
-                    <CardDescription>{partidosJornada.length} partidos — solo emparejamientos</CardDescription>
+                  <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-lg">Jornada {jornada}</CardTitle>
+                      <CardDescription>{partidosJornada.length} partidos — solo emparejamientos</CardDescription>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => openCrearPartidoEnJornada(jornada)}>
+                        <Plus className="mr-1 h-4 w-4" />
+                        Agregar partido
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => openEditJornada(jornada, partidosJornada)}>
+                        <Edit className="mr-1 h-4 w-4" />
+                        Editar jornada
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => void openDeleteJornada(jornada)}
+                        disabled={deleteJornadaLoading}
+                      >
+                        <Trash2 className="mr-1 h-4 w-4" />
+                        Eliminar jornada
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -851,7 +1134,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                         const colVis = '#64748b'
 
                         return (
-                          <Card key={partido.id} className="overflow-hidden">
+                          <div key={partido.id} className="overflow-hidden rounded-md border bg-card">
                             <div className="p-4">
                               <p className="mb-3 text-xs text-muted-foreground">Orden {partido.orden ?? 0}</p>
 
@@ -929,7 +1212,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 )}
                               </div>
                             </div>
-                          </Card>
+                          </div>
                         )
                       })}
                     </div>
