@@ -485,15 +485,15 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
 
     if (isWalkover) {
       if (!noPresentId || !ganadorId) {
-        toast.error('Selecciona el equipo ganador y el equipo que no se presentÃ³.')
+        toast.error('Selecciona el equipo ganador y el equipo que no se presentó.')
         return
       }
       if (noPresentId === ganadorId) {
-        toast.error('El equipo ganador no puede ser el mismo que el equipo que no se presentÃ³.')
+        toast.error('El equipo ganador no puede ser el mismo que el equipo que no se presentó.')
         return
       }
       if (![el, ev].includes(noPresentId) || ![el, ev].includes(ganadorId)) {
-        toast.error('El equipo ganador y el equipo que no se presentÃ³ deben pertenecer al partido.')
+        toast.error('El equipo ganador y el equipo que no se presentó deben pertenecer al partido.')
         return
       }
     }
@@ -607,7 +607,6 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         partidoId: partido.id,
         equipoLocalId: el,
         equipoVisitanteId: ev,
-        arbitro_id: actaQ.data.arbitro_id ?? null,
         arbitro_nombre: arbitroNombre.trim() || null,
         escuela_arbitral_nombre: escuelaArbitral.trim() || null,
         observaciones: observaciones.trim() || null,

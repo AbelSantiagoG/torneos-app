@@ -104,6 +104,12 @@ export function translateUserError(error: unknown, context: UserErrorContext = '
   }
 
   if (context === 'programacion' || (text.includes('cancha') && (text.includes('horario') || text.includes('hora')))) {
+    if (text.includes('does not exist') && text.includes('column')) {
+      const col = text.match(/column\s+[\w.]+\.(\w+)\s+does not exist/i)?.[1]
+      return col
+        ? `No se pudo guardar el acta: el campo «${col}» no existe en la base de datos. Recarga la página o contacta al administrador.`
+        : 'No se pudo guardar el acta: hay un campo incompatible con la base de datos. Recarga la página.'
+    }
     if (text.includes('overlap') || text.includes('exclusion') || text.includes('exclusión')) {
       return 'Ya hay un partido programado en esa cancha a la misma hora. Elige otro horario o cancha.'
     }

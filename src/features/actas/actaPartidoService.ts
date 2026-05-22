@@ -30,7 +30,6 @@ export type TarjetaActaRow = {
 export type ActaPartidoRow = {
   id: string
   partido_id: string
-  arbitro_id: string | null
   observaciones: string | null
   cerrada: boolean | null
   definicion: DefinicionPartidoDb | string | null
@@ -64,7 +63,7 @@ export type CambioPartidoActaRow = {
 }
 
 const ACTA_SELECT =
-  'id, partido_id, arbitro_id, observaciones, cerrada, definicion, fue_tiempo_extra, fue_penales, penales_local, penales_visitante, equipo_ganador_id, equipo_no_presentado_id, arbitro_nombre, escuela_arbitral_nombre, export_url'
+  'id, partido_id, observaciones, cerrada, definicion, fue_tiempo_extra, fue_penales, penales_local, penales_visitante, equipo_ganador_id, equipo_no_presentado_id, arbitro_nombre, escuela_arbitral_nombre, export_url'
 
 async function fetchActasResumenPorPartidos(partidoIds: string[]): Promise<Map<string, { cerrada: boolean }>> {
   const map = new Map<string, { cerrada: boolean }>()
@@ -139,7 +138,6 @@ export async function getOrCreateActa(partidoId: string): Promise<ActaPartidoRow
 export async function updateActaCabecera(actaId: string, patch: Partial<ActaPartidoRow>): Promise<void> {
   const allowed: Partial<Record<keyof ActaPartidoRow, unknown>> = {}
   const keys: (keyof ActaPartidoRow)[] = [
-    'arbitro_id',
     'observaciones',
     'cerrada',
     'definicion',
@@ -160,8 +158,10 @@ export async function updateActaCabecera(actaId: string, patch: Partial<ActaPart
   }
   if (!Object.keys(allowed).length) return
   const r = await supabase.from('actas_partido').update(allowed).eq('id', actaId)
-  if (r.error) console.error('Error actualizando cabecera de acta', { actaId, payload: allowed, error: r.error })
-  assertNoSupabaseError(r, 'programacion')
+  if (r.error) {
+    console.error('Error guardando acta', { actaId, payload: allowed, error: r.error })
+    assertNoSupabaseError(r, 'programacion')
+  }
 }
 
 export async function guardarActaAdministrativa(input: {
@@ -194,7 +194,7 @@ export async function guardarActaAdministrativa(input: {
       .from('actas_partido')
       .update(payload)
       .eq('id', input.actaId)
-    if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
+    if (r.error) console.error('Error guardando acta', { payload, error: r.error })
     assertNoSupabaseError(r, 'programacion')
     return
   }
@@ -205,7 +205,7 @@ export async function guardarActaAdministrativa(input: {
       .from('actas_partido')
       .update(payload)
       .eq('id', existing.id)
-    if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
+    if (r.error) console.error('Error guardando acta', { payload, error: r.error })
     assertNoSupabaseError(r, 'programacion')
     return
   }
@@ -274,7 +274,6 @@ export async function guardarActaCompleta(input: {
   partidoId: string
   equipoLocalId: string
   equipoVisitanteId: string
-  arbitro_id: string | null
   arbitro_nombre: string | null
   escuela_arbitral_nombre: string | null
   observaciones: string | null
@@ -296,8 +295,7 @@ export async function guardarActaCompleta(input: {
   const walkover = input.definicion === 'walkover'
   const bloqueaEventos = suspendido || walkover
 
-  await updateActaCabecera(input.actaId, {
-    arbitro_id: input.arbitro_id,
+  const cabeceraPayload = {
     arbitro_nombre: input.arbitro_nombre,
     escuela_arbitral_nombre: input.escuela_arbitral_nombre,
     observaciones: input.observaciones,
@@ -309,7 +307,9 @@ export async function guardarActaCompleta(input: {
     equipo_ganador_id: input.equipo_ganador_id,
     equipo_no_presentado_id: input.equipo_no_presentado_id,
     cerrada: input.actaCerrada ?? false,
-  })
+  }
+
+  await updateActaCabecera(input.actaId, cabeceraPayload)
 
   const delPj = await supabase.from('partido_jugadores').delete().eq('partido_id', input.partidoId)
   assertNoSupabaseError(delPj, 'programacion')
