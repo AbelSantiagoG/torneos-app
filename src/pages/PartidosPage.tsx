@@ -322,8 +322,15 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   )
 
   const partidosSorteo = useMemo(
-    () => (sorteoCategoria ? fixture.filter((p) => p.categoriaId === sorteoCategoria) : []),
-    [fixture, sorteoCategoria],
+    () =>
+      sorteoCategoria
+        ? fixture.filter(
+            (p) =>
+              p.categoriaId === sorteoCategoria &&
+              (sorteoCategoria !== selectedCategoria || !faseActualFixture || (p.faseTorneoId ?? '') === faseActualFixture.id),
+          )
+        : [],
+    [faseActualFixture, fixture, selectedCategoria, sorteoCategoria],
   )
 
   const pendientesSorteo = useMemo(
@@ -350,6 +357,60 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       partidos: partidos.sort((a, b) => a.jornada - b.jornada || a.orden - b.orden),
     })).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
   }, [fixtureGrupos])
+
+  const fixtureGrupoPorPartido = useMemo(
+    () => new Map(fixtureGrupos.map((p) => [p.partidoId, p])),
+    [fixtureGrupos],
+  )
+
+  const sorteoAgrupado = useMemo(() => {
+    const esPorGruposEnSorteo = fixtureEsPorGrupos && sorteoCategoria === selectedCategoria
+    if (!esPorGruposEnSorteo) {
+      const jornadasMap = new Map<number, PartidoListaUi[]>()
+      for (const partido of pendientesSorteo) {
+        const jornada = partido.jornada || 0
+        jornadasMap.set(jornada, [...(jornadasMap.get(jornada) ?? []), partido])
+      }
+      return [
+        {
+          key: 'sin-grupo',
+          nombre: '',
+          orden: 0,
+          jornadas: [...jornadasMap.entries()]
+            .map(([jornada, partidos]) => ({ jornada, partidos: partidos.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)) }))
+            .sort((a, b) => a.jornada - b.jornada),
+        },
+      ]
+    }
+
+    const gruposMap = new Map<string, { key: string; nombre: string; orden: number; jornadas: Map<number, PartidoListaUi[]> }>()
+    for (const partido of pendientesSorteo) {
+      const meta = fixtureGrupoPorPartido.get(partido.id)
+      const key = meta?.grupoId || meta?.grupoNombre || 'sin-grupo'
+      const current =
+        gruposMap.get(key) ??
+        {
+          key,
+          nombre: meta?.grupoNombre || 'Sin grupo asignado',
+          orden: meta?.grupoOrden ?? 999,
+          jornadas: new Map<number, PartidoListaUi[]>(),
+        }
+      const jornada = partido.jornada || meta?.jornada || 0
+      current.jornadas.set(jornada, [...(current.jornadas.get(jornada) ?? []), partido])
+      gruposMap.set(key, current)
+    }
+
+    return [...gruposMap.values()]
+      .map((grupo) => ({
+        key: grupo.key,
+        nombre: grupo.nombre,
+        orden: grupo.orden,
+        jornadas: [...grupo.jornadas.entries()]
+          .map(([jornada, partidos]) => ({ jornada, partidos: partidos.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)) }))
+          .sort((a, b) => a.jornada - b.jornada),
+      }))
+      .sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
+  }, [fixtureEsPorGrupos, fixtureGrupoPorPartido, pendientesSorteo, selectedCategoria, sorteoCategoria])
 
   const grupoEquiposPorGrupo = useMemo(() => {
     const groups = new Map<string, GrupoEquipoUi[]>()
@@ -907,6 +968,29 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const eliminarPartido = async (p: PartidoListaUi) => eliminarPartidoFixture(p.id)
 
+  const eliminarPartidoProgramado = async (p: PartidoListaUi) => {
+    const ok = confirm(
+      'Este partido ya está programado. Si lo eliminas, también se eliminará su programación y cualquier información asociada. ¿Deseas continuar?',
+    )
+    if (!ok) return
+    try {
+      try {
+        await eliminarPartidoFixtureSeguro(p.id, false)
+      } catch (e) {
+        if (!isForceDeleteError(e)) throw e
+        const force = confirm(
+          'Este partido tiene información asociada. Si continúas, se eliminarán programación, acta, goles, tarjetas y registros relacionados.',
+        )
+        if (!force) return
+        await eliminarPartidoFixtureSeguro(p.id, true)
+      }
+      toast.success('Partido eliminado')
+      removePartidosFromCache([p.id])
+    } catch {
+      toast.error('No se pudo eliminar el partido.')
+    }
+  }
+
   const eliminarFixtureActual = async () => {
     if (!selectedCategoria) {
       toast.error('Selecciona una categoría.')
@@ -1009,7 +1093,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       setSorteoDrafts(borrador)
       toast.success('Propuesta generada. Revisa y guarda cuando esté listo.')
     } catch (e) {
-      toast.error(translateUserError(e, 'programacion'))
+      const msg = translateUserError(e, 'programacion')
+      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo actualizar la programación.')
     }
   }
 
@@ -1784,7 +1869,13 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-1">
                   <Label>Categoría</Label>
-                  <Select value={sorteoCategoria} onValueChange={setSorteoCategoria}>
+                  <Select
+                    value={sorteoCategoria}
+                    onValueChange={(v) => {
+                      setSorteoCategoria(v)
+                      setSelectedCategoria(v)
+                    }}
+                  >
                     <SelectTrigger className="w-full md:w-64">
                       <SelectValue placeholder="Categoría" />
                     </SelectTrigger>
@@ -1820,112 +1911,131 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               </div>
 
               {pendientesSorteo.length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Jornada</TableHead>
-                      <TableHead>Partido</TableHead>
-                      <TableHead>Fecha</TableHead>
-                      <TableHead>Cancha</TableHead>
-                      <TableHead>Hora inicio</TableHead>
-                      <TableHead>Hora fin</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pendientesSorteo.map((partido) => {
-                      const canchasActivas = canchas.filter((c) => c.activa !== false)
-                      const d = sorteoDrafts[partido.id]
-                      const defaultHora = horasParaProgramacion[0]
-                        ? formatHoraUi(normalizeHoraDb(horasParaProgramacion[0]!.hora))
-                        : '09:00'
-                      const eff: SorteoBorradorSlot = {
-                        fecha: d?.fecha ?? sorteoFecha,
-                        canchaId: d?.canchaId ?? canchasActivas[0]?.id ?? '',
-                        hora: d?.hora ?? defaultHora,
-                        horaFin: d?.horaFin,
-                      }
-                      return (
-                        <TableRow key={partido.id}>
-                          <TableCell>Jornada {partido.jornada}</TableCell>
-                          <TableCell>
-                            {partido.equipoLocalNombre} vs {partido.equipoVisitanteNombre}
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="date"
-                              className="min-w-[9.5rem]"
-                              value={eff.fecha}
-                              onChange={(e) =>
-                                setSorteoDrafts((prev) => ({
-                                  ...prev,
-                                  [partido.id]: { ...eff, fecha: e.target.value },
-                                }))
-                              }
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Select
-                              value={eff.canchaId || canchasActivas[0]?.id}
-                              onValueChange={(v) =>
-                                setSorteoDrafts((prev) => ({
-                                  ...prev,
-                                  [partido.id]: { ...eff, canchaId: v },
-                                }))
-                              }
-                            >
-                              <SelectTrigger className="min-w-[8rem]">
-                                <SelectValue placeholder="Cancha" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {canchasActivas.map((c) => (
-                                  <SelectItem key={c.id} value={c.id}>
-                                    {c.nombre}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="time"
-                              className="min-w-[6.5rem]"
-                              value={(eff.hora || defaultHora).slice(0, 5)}
-                              onChange={(e) =>
-                                setSorteoDrafts((prev) => ({
-                                  ...prev,
-                                  [partido.id]: { ...eff, hora: e.target.value },
-                                }))
-                              }
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="time"
-                              className="min-w-[6.5rem]"
-                              value={(eff.horaFin || '').slice(0, 5)}
-                              onChange={(e) =>
-                                setSorteoDrafts((prev) => ({
-                                  ...prev,
-                                  [partido.id]: { ...eff, horaFin: e.target.value },
-                                }))
-                              }
-                            />
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openProgramacion(partido, eff)}
-                            >
-                              Programar
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
+                <div className="space-y-4">
+                  {sorteoAgrupado.map((grupo) => (
+                    <div key={grupo.key} className="space-y-3">
+                      {grupo.nombre && <h3 className="text-base font-semibold">{grupo.nombre}</h3>}
+                      {grupo.jornadas.map(({ jornada, partidos }) => (
+                        <Card key={`${grupo.key}-${jornada}`}>
+                          <CardHeader className="py-3">
+                            <CardTitle className="text-sm">Jornada {jornada || 'sin jornada'}</CardTitle>
+                            <CardDescription>{partidos.length} partidos pendientes por programar</CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            {partidos.length === 0 ? (
+                              <p className="text-sm text-muted-foreground">No hay partidos pendientes por programar en esta jornada.</p>
+                            ) : (
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Partido</TableHead>
+                                    <TableHead>Fecha</TableHead>
+                                    <TableHead>Cancha</TableHead>
+                                    <TableHead>Hora inicio</TableHead>
+                                    <TableHead>Hora fin</TableHead>
+                                    <TableHead className="text-right">Acciones</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {partidos.map((partido) => {
+                                    const canchasActivas = canchas.filter((c) => c.activa !== false)
+                                    const d = sorteoDrafts[partido.id]
+                                    const defaultHora = horasParaProgramacion[0]
+                                      ? formatHoraUi(normalizeHoraDb(horasParaProgramacion[0]!.hora))
+                                      : '09:00'
+                                    const eff: SorteoBorradorSlot = {
+                                      fecha: d?.fecha ?? sorteoFecha,
+                                      canchaId: d?.canchaId ?? canchasActivas[0]?.id ?? '',
+                                      hora: d?.hora ?? defaultHora,
+                                      horaFin: d?.horaFin,
+                                    }
+                                    return (
+                                      <TableRow key={partido.id}>
+                                        <TableCell>
+                                          {partido.equipoLocalNombre} vs {partido.equipoVisitanteNombre}
+                                        </TableCell>
+                                        <TableCell>
+                                          <Input
+                                            type="date"
+                                            className="min-w-[9.5rem]"
+                                            value={eff.fecha}
+                                            onChange={(e) =>
+                                              setSorteoDrafts((prev) => ({
+                                                ...prev,
+                                                [partido.id]: { ...eff, fecha: e.target.value },
+                                              }))
+                                            }
+                                          />
+                                        </TableCell>
+                                        <TableCell>
+                                          <Select
+                                            value={eff.canchaId || canchasActivas[0]?.id}
+                                            onValueChange={(v) =>
+                                              setSorteoDrafts((prev) => ({
+                                                ...prev,
+                                                [partido.id]: { ...eff, canchaId: v },
+                                              }))
+                                            }
+                                          >
+                                            <SelectTrigger className="min-w-[8rem]">
+                                              <SelectValue placeholder="Cancha" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {canchasActivas.map((c) => (
+                                                <SelectItem key={c.id} value={c.id}>
+                                                  {c.nombre}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </TableCell>
+                                        <TableCell>
+                                          <Input
+                                            type="time"
+                                            className="min-w-[6.5rem]"
+                                            value={(eff.hora || defaultHora).slice(0, 5)}
+                                            onChange={(e) =>
+                                              setSorteoDrafts((prev) => ({
+                                                ...prev,
+                                                [partido.id]: { ...eff, hora: e.target.value },
+                                              }))
+                                            }
+                                          />
+                                        </TableCell>
+                                        <TableCell>
+                                          <Input
+                                            type="time"
+                                            className="min-w-[6.5rem]"
+                                            value={(eff.horaFin || '').slice(0, 5)}
+                                            onChange={(e) =>
+                                              setSorteoDrafts((prev) => ({
+                                                ...prev,
+                                                [partido.id]: { ...eff, horaFin: e.target.value },
+                                              }))
+                                            }
+                                          />
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => openProgramacion(partido, eff)}
+                                          >
+                                            Programar
+                                          </Button>
+                                        </TableCell>
+                                      </TableRow>
+                                    )
+                                  })}
+                                </TableBody>
+                              </Table>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <EmptyState
                   icon={Calendar}
@@ -2372,9 +2482,20 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   </Badge>
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  <Button type="button" variant="outline" size="sm" onClick={() => openProgramacion(partido)}>
-                                    Editar programación
-                                  </Button>
+                                  <div className="flex justify-end gap-2">
+                                    <Button type="button" variant="outline" size="sm" onClick={() => openProgramacion(partido)}>
+                                      Editar programación
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="text-destructive"
+                                      onClick={() => void eliminarPartidoProgramado(partido)}
+                                    >
+                                      Eliminar partido
+                                    </Button>
+                                  </div>
                                 </TableCell>
                               </TableRow>
                             )
