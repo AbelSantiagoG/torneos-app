@@ -54,16 +54,16 @@ import {
   countPartidosEnCategoria,
   countPartidosEnFase,
   generarFixtureCategoria,
-  deletePartidoCascade,
-  deleteJornadaCompleta,
+  eliminarFixtureFaseSeguro,
+  eliminarJornadaFixtureSeguro,
+  eliminarPartidoFixtureSeguro,
   updatePartido,
   updatePartidosJornada,
   createPartidoManual,
-  getJornadaDeleteSummary,
   assignPartidosCategoriaSinFase,
   upsertProgramacion,
   generarBorradorSorteo,
-  type JornadaDeleteSummary,
+  type PartidosTorneoBundle,
   type SorteoBorradorSlot,
 } from '@/features/partidos/partidosService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
@@ -188,9 +188,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [jornadaDraft, setJornadaDraft] = useState('1')
   const [deleteJornada, setDeleteJornada] = useState<{
     jornada: number
-    summary: JornadaDeleteSummary
+    grupoId?: string | null
+    grupoNombre?: string | null
   } | null>(null)
   const [deleteJornadaLoading, setDeleteJornadaLoading] = useState(false)
+  const [deleteFixtureLoading, setDeleteFixtureLoading] = useState(false)
   const [editJornadaOpen, setEditJornadaOpen] = useState(false)
   const [editJornadaRows, setEditJornadaRows] = useState<
     { id: string; label: string; jornada: string; orden: string }[]
@@ -342,7 +344,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
     return [...groups.entries()].map(([key, partidos]) => ({
       key,
-      nombre: partidos[0]?.grupoNombre ?? 'Grupo',
+      grupoId: partidos[0]?.grupoId || null,
+      nombre: partidos[0]?.grupoNombre || 'Sin grupo asignado',
       orden: partidos[0]?.grupoOrden ?? 0,
       partidos: partidos.sort((a, b) => a.jornada - b.jornada || a.orden - b.orden),
     })).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
@@ -398,6 +401,38 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
   }
 
+  const updatePartidosCache = (updater: (old: PartidosTorneoBundle) => PartidosTorneoBundle) => {
+    if (!torneoId) return
+    qc.setQueryData<PartidosTorneoBundle>(partidosTorneoQueryKey(torneoId), (old) => (old ? updater(old) : old))
+  }
+
+  const removePartidosFromCache = (partidoIds: string[]) => {
+    const ids = new Set(partidoIds.filter(Boolean))
+    if (!ids.size) return
+    updatePartidosCache((old) => ({
+      fixture: old.fixture.filter((p) => !ids.has(p.id)),
+      programados: old.programados.filter((p) => !ids.has(p.id)),
+    }))
+    qc.setQueryData<FixtureGrupoUi[]>(fixtureGruposQueryKey, (old = []) => old.filter((p) => !ids.has(p.partidoId)))
+  }
+
+  const isForceDeleteError = (error: unknown) => {
+    const msg = String((error as Error)?.message ?? error ?? '').toLowerCase()
+    return [
+      'asociad',
+      'programaci',
+      'acta',
+      'jugad',
+      'goles',
+      'tarjetas',
+      'forzar',
+      'confirm',
+      'relacionad',
+    ].some((token) => msg.includes(token))
+  }
+
+  const selectedFaseIdForRpc = () => selectedFixtureFase || faseActualFixture?.id || null
+
   const resetFaseForm = () => {
     setFaseNombre('')
     setFaseTipo('')
@@ -432,37 +467,40 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setCreateOpen(true)
   }
 
-  const openDeleteJornada = async (jornada: number) => {
+  const openDeleteJornada = (jornada: number, grupoId?: string | null, grupoNombre?: string | null) => {
     if (!selectedCategoria) return
-    setDeleteJornadaLoading(true)
-    try {
-      const summary = await getJornadaDeleteSummary({
-        torneoId,
-        categoriaId: selectedCategoria,
-        jornada,
-        faseTorneoId: selectedFixtureFase || null,
-      })
-      setDeleteJornada({ jornada, summary })
-    } catch (e) {
-      toast.error(translateUserError(e, 'fixture'))
-    } finally {
-      setDeleteJornadaLoading(false)
-    }
+    setDeleteJornada({ jornada, grupoId: grupoId ?? null, grupoNombre: grupoNombre ?? null })
   }
 
   const confirmarDeleteJornada = async () => {
     if (!selectedCategoria || !deleteJornada) return
     setDeleteJornadaLoading(true)
-    try {
-      await deleteJornadaCompleta({
-        torneoId,
+    const faseId = selectedFaseIdForRpc()
+    const partidoIds = fixtureEsPorGrupos
+      ? fixtureGrupos
+          .filter((p) => p.jornada === deleteJornada.jornada && (!deleteJornada.grupoId || p.grupoId === deleteJornada.grupoId))
+          .map((p) => p.partidoId)
+      : partidosCategoria.filter((p) => p.jornada === deleteJornada.jornada).map((p) => p.id)
+    const exec = (forzar: boolean) =>
+      eliminarJornadaFixtureSeguro({
         categoriaId: selectedCategoria,
+        faseTorneoId: faseId,
         jornada: deleteJornada.jornada,
-        faseTorneoId: selectedFixtureFase || null,
+        grupoId: deleteJornada.grupoId ?? null,
+        forzar,
       })
+    try {
+      try {
+        await exec(false)
+      } catch (e) {
+        if (!isForceDeleteError(e)) throw e
+        const ok = confirm('Esta jornada tiene información asociada. Confirma si deseas eliminarla.')
+        if (!ok) return
+        await exec(true)
+      }
       toast.success('Jornada eliminada.')
+      removePartidosFromCache(partidoIds)
       setDeleteJornada(null)
-      invalidatePartidos()
     } catch (e) {
       toast.error('No se pudo eliminar la jornada.')
     } finally {
@@ -848,14 +886,66 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
   }
 
-  const eliminarPartido = async (p: PartidoListaUi) => {
-    if (!confirm('¿Eliminar este partido del fixture? Se borrarán también programación, goles y acta asociados si existen.')) return
+  const eliminarPartidoFixture = async (partidoId: string) => {
     try {
-      await deletePartidoCascade(p.id)
+      try {
+        await eliminarPartidoFixtureSeguro(partidoId, false)
+      } catch (e) {
+        if (!isForceDeleteError(e)) throw e
+        const ok = confirm(
+          'Este partido tiene información asociada. Si lo eliminas, también se eliminarán su programación, acta, goles, tarjetas y registros relacionados. ¿Deseas continuar?',
+        )
+        if (!ok) return
+        await eliminarPartidoFixtureSeguro(partidoId, true)
+      }
       toast.success('Partido eliminado')
-      invalidatePartidos()
-    } catch (e) {
-      toast.error(translateUserError(e, 'fixture'))
+      removePartidosFromCache([partidoId])
+    } catch {
+      toast.error('No se pudo eliminar el partido.')
+    }
+  }
+
+  const eliminarPartido = async (p: PartidoListaUi) => eliminarPartidoFixture(p.id)
+
+  const eliminarFixtureActual = async () => {
+    if (!selectedCategoria) {
+      toast.error('Selecciona una categoría.')
+      return
+    }
+    const faseId = selectedFaseIdForRpc()
+    if (!faseId) {
+      toast.error('Selecciona una fase.')
+      return
+    }
+    setDeleteFixtureLoading(true)
+    const partidoIds = fixtureEsPorGrupos
+      ? fixtureGrupos.map((p) => p.partidoId)
+      : partidosCategoria.filter((p) => (p.faseTorneoId ?? '') === faseId).map((p) => p.id)
+    const exec = (forzar: boolean) =>
+      eliminarFixtureFaseSeguro({
+        categoriaId: selectedCategoria,
+        faseTorneoId: faseId,
+        forzar,
+      })
+    try {
+      try {
+        await exec(false)
+      } catch (e) {
+        if (!isForceDeleteError(e)) throw e
+        const ok = confirm('Este fixture tiene información asociada. Confirma si deseas eliminarlo.')
+        if (!ok) return
+        await exec(true)
+      }
+      toast.success('Fixture eliminado.')
+      removePartidosFromCache(partidoIds)
+      if (fixtureEsPorGrupos) {
+        qc.setQueryData<FixtureGrupoUi[]>(fixtureGruposQueryKey, [])
+        void refetchGruposFase()
+      }
+    } catch {
+      toast.error('No se pudo eliminar el fixture.')
+    } finally {
+      setDeleteFixtureLoading(false)
     }
   }
 
@@ -1188,26 +1278,18 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       <Dialog open={Boolean(deleteJornada)} onOpenChange={(open) => !open && setDeleteJornada(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Eliminar jornada {deleteJornada?.jornada}</DialogTitle>
+            <DialogTitle>
+              Eliminar jornada {deleteJornada?.jornada}
+              {deleteJornada?.grupoNombre ? ` · ${deleteJornada.grupoNombre}` : ''}
+            </DialogTitle>
             <DialogDescription>
               Esta acción eliminará todos los partidos de la jornada seleccionada. Si existen programaciones o actas asociadas,
               también podrían verse afectadas. ¿Deseas continuar?
             </DialogDescription>
           </DialogHeader>
           {deleteJornada && (
-            <div className="space-y-3 py-2 text-sm">
-              <p>
-                Partidos a eliminar: <span className="font-medium">{deleteJornada.summary.partidos}</span>
-              </p>
-              {deleteJornada.summary.tieneInformacionAsociada ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
-                  Esta jornada tiene información asociada: {deleteJornada.summary.jugados} jugados,{' '}
-                  {deleteJornada.summary.programaciones} programaciones, {deleteJornada.summary.actas} actas,{' '}
-                  {deleteJornada.summary.goles} goles y {deleteJornada.summary.tarjetas} tarjetas.
-                </div>
-              ) : (
-                <p className="text-muted-foreground">No se detectó programación, acta, goles ni tarjetas asociados.</p>
-              )}
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              Si Supabase detecta información asociada, se pedirá una confirmación adicional antes de forzar la eliminación.
             </div>
           )}
           <DialogFooter>
@@ -1407,6 +1489,17 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <Button type="button" variant="outline" size="sm" onClick={() => setFixtureOpen(true)}>
                     {fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar fixture'}
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive"
+                    onClick={() => void eliminarFixtureActual()}
+                    disabled={!selectedCategoria || !faseActualFixture || deleteFixtureLoading}
+                  >
+                    <Trash2 className="mr-1 h-4 w-4" />
+                    Eliminar fixture
+                  </Button>
                   <Button type="button" variant="outline" size="sm" onClick={openCrearJornada} disabled={!selectedCategoria}>
                     <Plus className="mr-1 h-4 w-4" />
                     Crear jornada
@@ -1474,7 +1567,20 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                           <div key={`${grupo.key}-${jornada}`} className="rounded-md border p-3">
                             <div className="mb-3 flex items-center justify-between gap-2">
                               <h3 className="text-sm font-semibold">Jornada {jornada}</h3>
-                              <span className="text-xs text-muted-foreground">{partidosJornada.length} partidos</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">{partidosJornada.length} partidos</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-destructive"
+                                  onClick={() => openDeleteJornada(jornada, grupo.grupoId, grupo.nombre)}
+                                  disabled={deleteJornadaLoading}
+                                >
+                                  <Trash2 className="mr-1 h-4 w-4" />
+                                  Eliminar jornada
+                                </Button>
+                              </div>
                             </div>
                             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                               {partidosJornada.map((partido) => {
@@ -1504,6 +1610,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                         {partido.cancha ? ` · ${partido.cancha}` : ''}
                                       </p>
                                     ) : null}
+                                    <div className="mt-3 flex justify-end">
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => void eliminarPartidoFixture(partido.partidoId)}
+                                      >
+                                        <Trash2 className="h-3 w-3 text-destructive" />
+                                      </Button>
+                                    </div>
                                   </div>
                                 )
                               })}

@@ -81,7 +81,7 @@ function mapFixtureGrupo(rowRaw: unknown): FixtureGrupoUi {
   return {
     partidoId: pickStr(row, 'partido_id', 'id'),
     grupoId: pickStr(row, 'grupo_id'),
-    grupoNombre: pickStr(row, 'grupo_nombre', 'nombre_grupo', 'grupo') || 'Grupo',
+    grupoNombre: pickStr(row, 'grupo', 'grupo_nombre', 'nombre_grupo') || 'Sin grupo asignado',
     grupoOrden: pickNum(row, 'grupo_orden', 'orden_grupo'),
     jornada: pickNum(row, 'jornada', 'numero_jornada'),
     orden: pickNum(row, 'orden', 'orden_partido'),

@@ -389,6 +389,44 @@ export async function generarFixtureCategoria(categoriaId: string, _fechaInicioL
   throw toUserError(last, 'fixture')
 }
 
+export async function eliminarPartidoFixtureSeguro(partidoId: string, forzar = false): Promise<void> {
+  const { error } = await supabase.rpc('eliminar_partido_fixture_seguro', {
+    p_partido_id: partidoId,
+    p_forzar: forzar,
+  })
+  if (error) throw toUserError(error, 'fixture')
+}
+
+export async function eliminarJornadaFixtureSeguro(params: {
+  categoriaId: string
+  faseTorneoId?: string | null
+  jornada: number
+  grupoId?: string | null
+  forzar?: boolean
+}): Promise<void> {
+  const { error } = await supabase.rpc('eliminar_jornada_fixture_seguro', {
+    p_categoria_id: params.categoriaId,
+    p_fase_torneo_id: params.faseTorneoId ?? null,
+    p_jornada: params.jornada,
+    p_grupo_id: params.grupoId ?? null,
+    p_forzar: Boolean(params.forzar),
+  })
+  if (error) throw toUserError(error, 'fixture')
+}
+
+export async function eliminarFixtureFaseSeguro(params: {
+  categoriaId: string
+  faseTorneoId?: string | null
+  forzar?: boolean
+}): Promise<void> {
+  const { error } = await supabase.rpc('eliminar_fixture_fase_seguro', {
+    p_categoria_id: params.categoriaId,
+    p_fase_torneo_id: params.faseTorneoId ?? null,
+    p_forzar: Boolean(params.forzar),
+  })
+  if (error) throw toUserError(error, 'fixture')
+}
+
 const CRUCE_CANCHA_HORARIO_MSG = 'Ya existe un partido programado en esa cancha durante ese horario.'
 
 async function assertSlotProgramacionLibre(params: {
