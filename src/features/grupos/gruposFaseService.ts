@@ -101,9 +101,10 @@ export async function listGruposFase(faseTorneoId: string): Promise<GrupoFaseUi[
     .from('vw_grupos_fase_detalle')
     .select('*')
     .eq('fase_torneo_id', faseTorneoId)
-    .order('orden', { ascending: true })
 
-  if (!view.error) return (view.data ?? []).map(mapGrupo)
+  if (!view.error) {
+    return (view.data ?? []).map(mapGrupo).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
+  }
 
   const table = await supabase
     .from('grupos_fase')
@@ -119,10 +120,10 @@ export async function listGrupoEquipos(faseTorneoId: string): Promise<GrupoEquip
     .from('vw_grupo_equipos_detalle')
     .select('*')
     .eq('fase_torneo_id', faseTorneoId)
-    .order('grupo_orden', { ascending: true })
-    .order('equipo_nombre', { ascending: true })
 
-  if (!view.error) return (view.data ?? []).map(mapGrupoEquipo)
+  if (!view.error) {
+    return (view.data ?? []).map(mapGrupoEquipo).sort((a, b) => a.grupoId.localeCompare(b.grupoId) || a.equipoNombre.localeCompare(b.equipoNombre))
+  }
 
   const grupos = await listGruposFase(faseTorneoId)
   if (!grupos.length) return []
@@ -219,6 +220,19 @@ export async function quitarEquipoDeGrupo(grupoEquipoId: string): Promise<void> 
   if (r.error) throw toUserError(r.error, 'fixture')
 }
 
+export async function quitarEquipoDeGrupoSeguro(grupoId: string, equipoId: string): Promise<void> {
+  const { error } = await supabase.rpc('quitar_equipo_de_grupo', {
+    p_grupo_id: grupoId,
+    p_equipo_id: equipoId,
+  })
+  if (error) throw toUserError(error, 'fixture')
+}
+
+export async function agregarEquiposRestantesAGrupo(grupoId: string): Promise<void> {
+  const { error } = await supabase.rpc('agregar_equipos_restantes_a_grupo', { p_grupo_id: grupoId })
+  if (error) throw toUserError(error, 'fixture')
+}
+
 export async function moverEquipoAGrupo(
   faseTorneoId: string,
   grupoEquipoId: string,
@@ -243,6 +257,11 @@ export async function deleteGrupoVacio(grupoId: string): Promise<void> {
   if ((c.count ?? 0) > 0) throw new Error('Solo puedes eliminar grupos vacíos.')
   const r = await supabase.from('grupos_fase').delete().eq('id', grupoId)
   if (r.error) throw toUserError(r.error, 'fixture')
+}
+
+export async function eliminarGrupoFaseSeguro(grupoId: string): Promise<void> {
+  const { error } = await supabase.rpc('eliminar_grupo_fase_seguro', { p_grupo_id: grupoId })
+  if (error) throw toUserError(error, 'fixture')
 }
 
 export async function validarGruposAntesDeFixture(faseTorneoId: string): Promise<void> {

@@ -88,15 +88,16 @@ import {
 } from '@/features/fases/fasesTorneoService'
 import {
   agregarEquipoAGrupo,
+  agregarEquiposRestantesAGrupo,
   crearGruposFase,
-  deleteGrupoVacio,
+  eliminarGrupoFaseSeguro,
   generarFixtureGruposFase,
   isFasePorGrupos,
   listFixtureGruposFase,
   listGrupoEquipos,
   listGruposFase,
   moverEquipoAGrupo,
-  quitarEquipoDeGrupo,
+  quitarEquipoDeGrupoSeguro,
   repartirEquiposAleatorioFase,
   updateGrupoNombre,
   validarGruposAntesDeFixture,
@@ -280,25 +281,28 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }, [fasesList, selectedFixtureFase])
 
   const fixtureEsPorGrupos = isFasePorGrupos(faseActualFixture?.tipo)
+  const gruposFaseQueryKey = ['grupos-fase', faseActualFixture?.id] as const
+  const grupoEquiposQueryKey = ['grupo-equipos', faseActualFixture?.id] as const
+  const fixtureGruposQueryKey = ['fixture-grupos', faseActualFixture?.id] as const
 
   const {
     data: gruposFase = [],
     refetch: refetchGruposFase,
     isLoading: gruposLoading,
   } = useQuery<GrupoFaseUi[]>({
-    queryKey: ['grupos-fase', faseActualFixture?.id],
+    queryKey: gruposFaseQueryKey,
     enabled: Boolean(faseActualFixture?.id && fixtureEsPorGrupos),
     queryFn: () => listGruposFase(faseActualFixture!.id),
   })
 
   const { data: grupoEquipos = [], refetch: refetchGrupoEquipos } = useQuery<GrupoEquipoUi[]>({
-    queryKey: ['grupo-equipos', faseActualFixture?.id],
+    queryKey: grupoEquiposQueryKey,
     enabled: Boolean(faseActualFixture?.id && fixtureEsPorGrupos),
     queryFn: () => listGrupoEquipos(faseActualFixture!.id),
   })
 
   const { data: fixtureGrupos = [], refetch: refetchFixtureGrupos } = useQuery<FixtureGrupoUi[]>({
-    queryKey: ['fixture-grupos', faseActualFixture?.id],
+    queryKey: fixtureGruposQueryKey,
     enabled: Boolean(faseActualFixture?.id && fixtureEsPorGrupos),
     queryFn: () => listFixtureGruposFase(faseActualFixture!.id),
   })
@@ -321,7 +325,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   )
 
   const pendientesSorteo = useMemo(
-    () => partidosSorteo.filter((p) => !programmedIds.has(p.id)),
+    () => partidosSorteo.filter((p) => !programmedIds.has(p.id) && !isJugadoEstado(p.estado)),
     [partidosSorteo, programmedIds],
   )
 
@@ -358,9 +362,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   )
 
   const equiposDisponiblesParaGrupo = useMemo(
-    () => equiposCat.filter((equipo) => !equiposAsignadosEnFase.has(equipo.id)),
+    () => equiposCat.filter((equipo) => equipo.estadoEquipo !== 'inactivo' && !equiposAsignadosEnFase.has(equipo.id)),
     [equiposCat, equiposAsignadosEnFase],
   )
+
+  const gruposConEquiposAsignados = gruposFase.length > 0 && grupoEquipos.length > 0
 
   const partidosPorFecha = useMemo(() => groupByFecha(programados), [programados])
 
@@ -582,7 +588,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const refetchGrupos = () => {
     void refetchGruposFase()
     void refetchGrupoEquipos()
+  }
+
+  const refetchFixturePorGrupos = () => {
     void refetchFixtureGrupos()
+    void refetchGruposFase()
   }
 
   const confirmarCambioGrupo = (grupo?: GrupoFaseUi | null): boolean => {
@@ -642,14 +652,31 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }
 
   const handleEliminarGrupo = async (grupo: GrupoFaseUi) => {
-    if (!confirmarCambioGrupo(grupo)) return
+    if (grupo.partidosCount > 0) {
+      toast.error('No se puede eliminar el grupo porque ya tiene partidos generados.')
+      return
+    }
+    const equiposGrupo = grupoEquiposPorGrupo.get(grupo.id) ?? []
+    if (
+      equiposGrupo.length > 0 &&
+      !confirm('Este grupo tiene equipos asignados. Si lo eliminas, esos equipos quedarán sin grupo en esta fase. ¿Deseas continuar?')
+    ) {
+      return
+    }
     setGrupoLoading(true)
+    const previousGrupos = qc.getQueryData<GrupoFaseUi[]>(gruposFaseQueryKey)
+    const previousEquipos = qc.getQueryData<GrupoEquipoUi[]>(grupoEquiposQueryKey)
+    qc.setQueryData<GrupoFaseUi[]>(gruposFaseQueryKey, (old = []) => old.filter((item) => item.id !== grupo.id))
+    qc.setQueryData<GrupoEquipoUi[]>(grupoEquiposQueryKey, (old = []) => old.filter((item) => item.grupoId !== grupo.id))
     try {
-      await deleteGrupoVacio(grupo.id)
+      await eliminarGrupoFaseSeguro(grupo.id)
       toast.success('Grupo eliminado.')
       refetchGrupos()
     } catch (e) {
-      toast.error(translateUserError(e, 'fixture'))
+      qc.setQueryData(gruposFaseQueryKey, previousGrupos)
+      qc.setQueryData(grupoEquiposQueryKey, previousEquipos)
+      const msg = translateUserError(e, 'fixture')
+      toast.error(msg.toLowerCase().includes('partido') ? 'No se puede eliminar el grupo porque ya tiene partidos generados.' : msg)
     } finally {
       setGrupoLoading(false)
     }
@@ -678,10 +705,41 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const handleQuitarEquipoGrupo = async (grupo: GrupoFaseUi, item: GrupoEquipoUi) => {
     if (!confirmarCambioGrupo(grupo)) return
     setGrupoLoading(true)
+    const previousEquipos = qc.getQueryData<GrupoEquipoUi[]>(grupoEquiposQueryKey)
+    const previousGrupos = qc.getQueryData<GrupoFaseUi[]>(gruposFaseQueryKey)
+    qc.setQueryData<GrupoEquipoUi[]>(grupoEquiposQueryKey, (old = []) => old.filter((row) => row.id !== item.id))
+    qc.setQueryData<GrupoFaseUi[]>(gruposFaseQueryKey, (old = []) =>
+      old.map((row) =>
+        row.id === grupo.id ? { ...row, equiposCount: Math.max(0, row.equiposCount - 1) } : row,
+      ),
+    )
     try {
-      await quitarEquipoDeGrupo(item.id)
-      toast.success('Equipo quitado del grupo.')
-      refetchGrupos()
+      await quitarEquipoDeGrupoSeguro(item.grupoId, item.equipoId)
+      toast.success('Equipo retirado del grupo.')
+      void refetchGrupoEquipos()
+      void refetchGruposFase()
+    } catch (e) {
+      qc.setQueryData(grupoEquiposQueryKey, previousEquipos)
+      qc.setQueryData(gruposFaseQueryKey, previousGrupos)
+      toast.error(translateUserError(e, 'fixture'))
+    } finally {
+      setGrupoLoading(false)
+    }
+  }
+
+  const handleAgregarRestantesGrupo = async (grupo: GrupoFaseUi) => {
+    if (!confirmarCambioGrupo(grupo)) return
+    const pendientes = equiposDisponiblesParaGrupo.length
+    if (pendientes <= 0) {
+      toast.message('No hay equipos pendientes por asignar.')
+      return
+    }
+    setGrupoLoading(true)
+    try {
+      await agregarEquiposRestantesAGrupo(grupo.id)
+      toast.success(`Se agregaron ${pendientes} equipos restantes.`)
+      void refetchGrupoEquipos()
+      void refetchGruposFase()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
     } finally {
@@ -737,8 +795,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.success('Fixture por grupos generado.')
         setFixtureOpen(false)
         invalidatePartidos()
-        void refetchFixtureGrupos()
-        void refetchGruposFase()
+        refetchFixturePorGrupos()
         return
       }
 
@@ -847,7 +904,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       return
     }
     if (!pendientesSorteo.length) {
-      toast.message('No hay partidos pendientes de programar en esta categoría.')
+      toast.message('No hay partidos pendientes por programar. Primero crea el fixture en Por categoría.')
       return
     }
     try {
@@ -973,7 +1030,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               Cancelar
             </Button>
             <Button type="button" onClick={() => void ejecutarGenerarFixture()} disabled={generandoFixture}>
-              {generandoFixture ? 'Generando…' : 'Generar'}
+              {generandoFixture ? 'Generando…' : fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1348,7 +1405,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     </SelectContent>
                   </Select>
                   <Button type="button" variant="outline" size="sm" onClick={() => setFixtureOpen(true)}>
-                    Generar fixture
+                    {fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar fixture'}
                   </Button>
                   <Button type="button" variant="outline" size="sm" onClick={openCrearJornada} disabled={!selectedCategoria}>
                     <Plus className="mr-1 h-4 w-4" />
@@ -1383,12 +1440,22 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             fixtureGrupos.length === 0 ? (
               <EmptyState
                 icon={Calendar}
-                title="Sin fixture por grupos"
-                description="Primero crea los grupos, asigna equipos y luego genera el fixture de esta fase."
+                title={gruposConEquiposAsignados ? 'Esta fase todavía no tiene fixture generado' : 'Sin grupos listos para fixture'}
+                description={
+                  gruposConEquiposAsignados
+                    ? 'Genera el fixture por grupos para ver las jornadas.'
+                    : 'Primero crea los grupos y asigna equipos a esta fase.'
+                }
                 action={
-                  <Button type="button" variant="default" onClick={() => setActiveTab('grupos')}>
-                    Ir a Grupos
-                  </Button>
+                  gruposConEquiposAsignados ? (
+                    <Button type="button" variant="default" onClick={() => setFixtureOpen(true)}>
+                      Generar fixture por grupos
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="default" onClick={() => setActiveTab('grupos')}>
+                      Ir a Grupos
+                    </Button>
+                  )
                 }
               />
             ) : (
@@ -1735,7 +1802,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                               size="sm"
                               onClick={() => openProgramacion(partido, eff)}
                             >
-                              Manual
+                              Programar
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -1746,8 +1813,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               ) : (
                 <EmptyState
                   icon={Calendar}
-                  title="Nada pendiente en esta categoría"
-                  description="Todos los partidos de la categoría elegida ya tienen programación, o aún no hay fixture."
+                  title="No hay partidos pendientes por programar"
+                  description="Primero crea el fixture en Por categoría."
                 />
               )}
             </CardContent>
@@ -1870,7 +1937,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   variant="ghost"
                                   size="sm"
                                   className="text-destructive"
-                                  disabled={grupoLoading || equiposGrupo.length > 0}
+                                  disabled={grupoLoading}
                                   onClick={() => void handleEliminarGrupo(grupo)}
                                 >
                                   <Trash2 className="h-4 w-4" />
@@ -1951,6 +2018,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 </div>
                                 <Button type="button" disabled={grupoLoading} onClick={() => void handleAgregarEquipoGrupo(grupo)}>
                                   Agregar
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  disabled={grupoLoading}
+                                  onClick={() => void handleAgregarRestantesGrupo(grupo)}
+                                >
+                                  Agregar equipos restantes
                                 </Button>
                               </div>
                             </CardContent>
@@ -2115,6 +2190,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                           <TableHead>Visitante</TableHead>
                           <TableHead>Cancha</TableHead>
                           <TableHead>Estado</TableHead>
+                          <TableHead className="text-right">Acciones</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -2178,6 +2254,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   <Badge variant={played ? 'default' : 'secondary'}>
                                     {played ? 'Jugado' : partido.estado || 'Programado'}
                                   </Badge>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button type="button" variant="outline" size="sm" onClick={() => openProgramacion(partido)}>
+                                    Editar programación
+                                  </Button>
                                 </TableCell>
                               </TableRow>
                             )
