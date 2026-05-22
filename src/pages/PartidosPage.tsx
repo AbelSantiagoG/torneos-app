@@ -171,6 +171,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [sorteoDias, setSorteoDias] = useState('14')
   const [sorteoDrafts, setSorteoDrafts] = useState<Record<string, SorteoBorradorSlot>>({})
   const [guardandoSorteo, setGuardandoSorteo] = useState(false)
+  const [guardandoProgramacion, setGuardandoProgramacion] = useState(false)
 
   const [editPartido, setEditPartido] = useState<PartidoListaUi | null>(null)
   const [editJornada, setEditJornada] = useState('')
@@ -1223,6 +1224,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       setSorteoDrafts(borrador)
       toast.success('Propuesta generada. Revisa y guarda cuando esté listo.')
     } catch (e) {
+      console.error('Error generando borrador de sorteo', { categoriaId: sorteoCategoria, fechaInicio: sorteoFecha, dias, error: e })
       const msg = translateUserError(e, 'programacion')
       toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo actualizar la programación.')
     }
@@ -1262,7 +1264,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       setSorteoDrafts({})
       invalidatePartidos()
     } catch (e) {
-      toast.error(translateUserError(e, 'programacion'))
+      console.error('Error guardando sorteo de horarios', { categoriaId: sorteoCategoria, drafts: sorteoDrafts, error: e })
+      const msg = translateUserError(e, 'programacion')
+      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo programar el partido. Revisa fecha, hora y cancha.')
     } finally {
       setGuardandoSorteo(false)
     }
@@ -1273,8 +1277,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       toast.error('Completa fecha y cancha.')
       return
     }
-    try {
-      await upsertProgramacion(progPartido.programacionId ?? null, {
+    const payload = {
         partido_id: progPartido.id,
         cancha_id: progCancha,
         fecha: progFecha,
@@ -1282,12 +1285,19 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         hora_fin: progHoraFin || undefined,
         estado: progEstado,
         observaciones: progObservaciones.trim() || null,
-      })
+    }
+    setGuardandoProgramacion(true)
+    try {
+      await upsertProgramacion(progPartido.programacionId ?? null, payload)
       toast.success('Programación guardada')
       setProgPartido(null)
       invalidatePartidos()
     } catch (e) {
-      toast.error(translateUserError(e, 'programacion'))
+      console.error('Error guardando programaciÃ³n', { payload, error: e })
+      const msg = translateUserError(e, 'programacion')
+      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo programar el partido. Revisa fecha, hora y cancha.')
+    } finally {
+      setGuardandoProgramacion(false)
     }
   }
 
@@ -1704,7 +1714,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <Button variant="outline" onClick={() => setProgPartido(null)}>
               Cancelar
             </Button>
-            <Button onClick={() => void guardarProgramacionManual()}>Guardar</Button>
+            <Button onClick={() => void guardarProgramacionManual()} disabled={guardandoProgramacion}>
+              {guardandoProgramacion ? 'Guardando...' : 'Guardar'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2164,10 +2176,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 <TableHeader>
                                   <TableRow>
                                     <TableHead>Partido</TableHead>
-                                    <TableHead>Fecha</TableHead>
-                                    <TableHead>Cancha</TableHead>
-                                    <TableHead>Hora inicio</TableHead>
-                                    <TableHead>Hora fin</TableHead>
+                                    <TableHead>Jornada</TableHead>
+                                    {grupo.nombre && <TableHead>Grupo</TableHead>}
+                                    <TableHead>Estado</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                   </TableRow>
                                 </TableHeader>
@@ -2189,66 +2200,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                         <TableCell>
                                           {partido.equipoLocalNombre} vs {partido.equipoVisitanteNombre}
                                         </TableCell>
+                                        <TableCell>Jornada {partido.jornada || jornada || 'sin jornada'}</TableCell>
+                                        {grupo.nombre && <TableCell>{grupo.nombre}</TableCell>}
                                         <TableCell>
-                                          <Input
-                                            type="date"
-                                            className="min-w-[9.5rem]"
-                                            value={eff.fecha}
-                                            onChange={(e) =>
-                                              setSorteoDrafts((prev) => ({
-                                                ...prev,
-                                                [partido.id]: { ...eff, fecha: e.target.value },
-                                              }))
-                                            }
-                                          />
-                                        </TableCell>
-                                        <TableCell>
-                                          <Select
-                                            value={eff.canchaId || canchasActivas[0]?.id}
-                                            onValueChange={(v) =>
-                                              setSorteoDrafts((prev) => ({
-                                                ...prev,
-                                                [partido.id]: { ...eff, canchaId: v },
-                                              }))
-                                            }
-                                          >
-                                            <SelectTrigger className="min-w-[8rem]">
-                                              <SelectValue placeholder="Cancha" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                              {canchasActivas.map((c) => (
-                                                <SelectItem key={c.id} value={c.id}>
-                                                  {c.nombre}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </TableCell>
-                                        <TableCell>
-                                          <Input
-                                            type="time"
-                                            className="min-w-[6.5rem]"
-                                            value={(eff.hora || defaultHora).slice(0, 5)}
-                                            onChange={(e) =>
-                                              setSorteoDrafts((prev) => ({
-                                                ...prev,
-                                                [partido.id]: { ...eff, hora: e.target.value },
-                                              }))
-                                            }
-                                          />
-                                        </TableCell>
-                                        <TableCell>
-                                          <Input
-                                            type="time"
-                                            className="min-w-[6.5rem]"
-                                            value={(eff.horaFin || '').slice(0, 5)}
-                                            onChange={(e) =>
-                                              setSorteoDrafts((prev) => ({
-                                                ...prev,
-                                                [partido.id]: { ...eff, horaFin: e.target.value },
-                                              }))
-                                            }
-                                          />
+                                          <Badge variant="outline">Pendiente de programar</Badge>
                                         </TableCell>
                                         <TableCell className="text-right">
                                           <Button

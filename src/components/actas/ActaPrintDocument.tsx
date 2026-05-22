@@ -158,6 +158,11 @@ export function ActaPrintDocument(props: ActaPrintDocumentProps) {
               Penales ({penalesLocal}) - ({penalesVisitante})
             </p>
           )}
+          {definicion === 'walkover' && (
+            <p className="mt-1 text-sm text-gray-600">
+              Ganador por W. Resultado administrativo: 3 - 0
+            </p>
+          )}
           <p className="mt-2 text-xs font-medium uppercase text-gray-600">
             {DEF_LABEL[definicion] ?? definicion}
           </p>

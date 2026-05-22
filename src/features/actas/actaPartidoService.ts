@@ -160,6 +160,7 @@ export async function updateActaCabecera(actaId: string, patch: Partial<ActaPart
   }
   if (!Object.keys(allowed).length) return
   const r = await supabase.from('actas_partido').update(allowed).eq('id', actaId)
+  if (r.error) console.error('Error actualizando cabecera de acta', { actaId, payload: allowed, error: r.error })
   assertNoSupabaseError(r, 'programacion')
 }
 
@@ -241,6 +242,8 @@ export async function guardarActaCompleta(input: {
   actaCerrada?: boolean
 }): Promise<{ golesLocal: number; golesVisitante: number }> {
   const suspendido = input.definicion === 'suspendido'
+  const walkover = input.definicion === 'walkover'
+  const bloqueaEventos = suspendido || walkover
 
   await updateActaCabecera(input.actaId, {
     arbitro_id: input.arbitro_id,
@@ -259,7 +262,7 @@ export async function guardarActaCompleta(input: {
 
   const delPj = await supabase.from('partido_jugadores').delete().eq('partido_id', input.partidoId)
   assertNoSupabaseError(delPj, 'programacion')
-  if (input.partidoJugadores.length) {
+  if (!bloqueaEventos && input.partidoJugadores.length) {
     const insPj = await supabase.from('partido_jugadores').insert(
       input.partidoJugadores.map((r) => ({
         partido_id: input.partidoId,
@@ -273,7 +276,7 @@ export async function guardarActaCompleta(input: {
 
   const delC = await supabase.from('cambios_partido').delete().eq('partido_id', input.partidoId)
   assertNoSupabaseError(delC, 'programacion')
-  if (input.cambios.length) {
+  if (!bloqueaEventos && input.cambios.length) {
     const insC = await supabase.from('cambios_partido').insert(
       input.cambios.map((c) => ({
         partido_id: input.partidoId,
@@ -289,7 +292,7 @@ export async function guardarActaCompleta(input: {
 
   const delG = await supabase.from('goles').delete().eq('partido_id', input.partidoId)
   assertNoSupabaseError(delG, 'programacion')
-  if (!suspendido && input.goles.length) {
+  if (!bloqueaEventos && input.goles.length) {
     const insG = await supabase.from('goles').insert(
       input.goles.map((g) => ({
         partido_id: input.partidoId,
@@ -304,7 +307,7 @@ export async function guardarActaCompleta(input: {
 
   const delT = await supabase.from('tarjetas').delete().eq('partido_id', input.partidoId)
   assertNoSupabaseError(delT, 'programacion')
-  if (!suspendido && input.tarjetas.length) {
+  if (!bloqueaEventos && input.tarjetas.length) {
     const insT = await supabase.from('tarjetas').insert(
       input.tarjetas.map((t) => {
         const row: Record<string, unknown> = {
@@ -321,10 +324,14 @@ export async function guardarActaCompleta(input: {
     assertNoSupabaseError(insT, 'programacion')
   }
 
-  const rowsForCount = suspendido ? [] : input.goles.map((g) => ({ equipo_id: g.equipo_id, tipo_gol: g.tipo_gol }))
-  const { local, vis } = countGolesMarcador(rowsForCount, input.equipoLocalId, input.equipoVisitanteId)
+  const rowsForCount = bloqueaEventos ? [] : input.goles.map((g) => ({ equipo_id: g.equipo_id, tipo_gol: g.tipo_gol }))
+  let { local, vis } = countGolesMarcador(rowsForCount, input.equipoLocalId, input.equipoVisitanteId)
+  if (walkover && input.equipo_ganador_id) {
+    local = input.equipo_ganador_id === input.equipoLocalId ? 3 : 0
+    vis = input.equipo_ganador_id === input.equipoVisitanteId ? 3 : 0
+  }
   const total = local + vis
-  const hayMarcador = !suspendido && (total > 0 || input.definicion === 'penales' || input.definicion === 'walkover')
+  const hayMarcador = !suspendido && (total > 0 || input.definicion === 'penales' || walkover)
   const nuevoEstadoPartido = suspendido
     ? 'suspendido'
     : hayMarcador || input.definicion !== 'tiempo_reglamentario'
@@ -333,7 +340,18 @@ export async function guardarActaCompleta(input: {
         ? 'programado'
         : 'pendiente_programar'
 
-  const upP = await supabase.from('partidos').update({ estado: nuevoEstadoPartido }).eq('id', input.partidoId)
+  let upP = await supabase.from('partidos').update({ estado: nuevoEstadoPartido }).eq('id', input.partidoId)
+  if (upP.error && suspendido) {
+    console.warn('No se pudo marcar el partido como suspendido; se conserva como programado.', {
+      partidoId: input.partidoId,
+      error: upP.error,
+    })
+    upP = await supabase
+      .from('partidos')
+      .update({ estado: input.tieneProgramacion ? 'programado' : 'pendiente_programar' })
+      .eq('id', input.partidoId)
+  }
+  if (upP.error) console.error('Error actualizando estado del partido desde acta', { partidoId: input.partidoId, estado: nuevoEstadoPartido, error: upP.error })
   assertNoSupabaseError(upP, 'programacion')
 
   if (input.tieneProgramacion) {
@@ -341,7 +359,16 @@ export async function guardarActaCompleta(input: {
     const pid = (prog.data as { id?: string } | null)?.id
     if (pid && nuevoEstadoPartido === 'jugado') {
       const upPr = await supabase.from('programaciones_partido').update({ estado: 'jugado' }).eq('id', pid)
+      if (upPr.error) console.error('Error actualizando programaciÃ³n a jugado desde acta', { programacionId: pid, error: upPr.error })
       assertNoSupabaseError(upPr, 'programacion')
+    } else if (pid && nuevoEstadoPartido === 'suspendido') {
+      const upPr = await supabase.from('programaciones_partido').update({ estado: 'suspendido' }).eq('id', pid)
+      if (upPr.error) {
+        console.warn('No se pudo marcar la programaciÃ³n como suspendida; el acta quedÃ³ documentada.', {
+          programacionId: pid,
+          error: upPr.error,
+        })
+      }
     }
   }
 

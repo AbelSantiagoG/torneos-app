@@ -9,7 +9,6 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Select,
   SelectContent,
@@ -73,9 +72,17 @@ const DEF_LABEL: Record<string, string> = {
   tiempo_reglamentario: 'Tiempo reglamentario',
   tiempo_extra: 'Tiempo extra',
   penales: 'Penales',
-  walkover: 'Walkover / W',
+  walkover: 'W / No presentaciÃ³n',
   suspendido: 'Suspendido',
 }
+
+const DEFINICIONES = [
+  { value: 'tiempo_reglamentario', label: 'Tiempo reglamentario' },
+  { value: 'tiempo_extra', label: 'Tiempo extra' },
+  { value: 'penales', label: 'Penales' },
+  { value: 'walkover', label: 'W / No presentaciÃ³n' },
+  { value: 'suspendido', label: 'Suspendido' },
+] as const
 
 function LogoMark({
   nombre,
@@ -190,17 +197,43 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     }
   }, [categorias, categoriaId])
 
+  const isWalkover = definicion === 'walkover'
   const isSuspendido = definicion === 'suspendido'
+  const bloqueaEventosDeportivos = isWalkover || isSuspendido
+
+  const limpiarEventosDeportivos = () => {
+      setGolesForm([])
+      setTarjetasForm([])
+    setCambiosForm([])
+    setTitLocal(new Set())
+    setIngLocal(new Set())
+    setTitVis(new Set())
+    setIngVis(new Set())
+  }
+
+  useEffect(() => {
+    if (isWalkover) {
+      limpiarEventosDeportivos()
+      setPenL('')
+      setPenV('')
+    }
+  }, [isWalkover])
 
   useEffect(() => {
     if (isSuspendido) {
-      setGolesForm([])
-      setTarjetasForm([])
+      limpiarEventosDeportivos()
       setPenL('')
       setPenV('')
       setGanadorId('')
+      setNoPresentId('')
     }
   }, [isSuspendido])
+
+  useEffect(() => {
+    if (isWalkover && ganadorId && noPresentId && ganadorId === noPresentId) {
+      setGanadorId('')
+    }
+  }, [ganadorId, isWalkover, noPresentId])
 
   useEffect(() => {
     if (partidosLista.length && !partidoId) {
@@ -225,6 +258,10 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   }, [partidoId, actaQ.data])
 
   useEffect(() => {
+    if (bloqueaEventosDeportivos) {
+      setGolesForm([])
+      return
+    }
     if (!golesInitQ.data) return
     setGolesForm(
       golesInitQ.data.map((g) => ({
@@ -235,9 +272,13 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         tipo_gol: (g.tipo_gol as TipoGolDb) ?? 'normal',
       })),
     )
-  }, [golesInitQ.data])
+  }, [bloqueaEventosDeportivos, golesInitQ.data])
 
   useEffect(() => {
+    if (bloqueaEventosDeportivos) {
+      setTarjetasForm([])
+      return
+    }
     if (!tarjetasInitQ.data) return
     setTarjetasForm(
       tarjetasInitQ.data.map((t) => ({
@@ -249,9 +290,16 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         motivo: t.motivo ?? '',
       })),
     )
-  }, [tarjetasInitQ.data])
+  }, [bloqueaEventosDeportivos, tarjetasInitQ.data])
 
   useEffect(() => {
+    if (bloqueaEventosDeportivos) {
+      setTitLocal(new Set())
+      setIngLocal(new Set())
+      setTitVis(new Set())
+      setIngVis(new Set())
+      return
+    }
     if (!pjInitQ.data) {
       setTitLocal(new Set())
       setIngLocal(new Set())
@@ -275,9 +323,13 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     setIngLocal(il)
     setTitVis(tv)
     setIngVis(iv)
-  }, [pjInitQ.data, partido?.equipoLocalId, partido?.equipoVisitanteId])
+  }, [bloqueaEventosDeportivos, pjInitQ.data, partido?.equipoLocalId, partido?.equipoVisitanteId])
 
   useEffect(() => {
+    if (bloqueaEventosDeportivos) {
+      setCambiosForm([])
+      return
+    }
     if (!cambiosInitQ.data) return
     setCambiosForm(
       cambiosInitQ.data.map((c) => ({
@@ -289,7 +341,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         obs: c.observacion ?? '',
       })),
     )
-  }, [cambiosInitQ.data])
+  }, [bloqueaEventosDeportivos, cambiosInitQ.data])
 
   const equiposQ = useQuery({
     queryKey: ['acta-equipos', partido?.equipoLocalId, partido?.equipoVisitanteId],
@@ -345,6 +397,9 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
 
   const marcador = useMemo(() => {
     if (!el || !ev) return { local: 0, vis: 0 }
+    if (isWalkover && ganadorId) {
+      return ganadorId === el ? { local: 3, vis: 0 } : { local: 0, vis: 3 }
+    }
     let local = 0
     let vis = 0
     for (const g of golesForm) {
@@ -359,7 +414,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       }
     }
     return { local, vis }
-  }, [golesForm, el, ev])
+  }, [golesForm, el, ev, ganadorId, isWalkover])
 
   const invalidatePartidos = () => {
     if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
@@ -368,8 +423,43 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   const fueTe = definicion === 'tiempo_extra'
   const fuePen = definicion === 'penales'
 
+  const cambiarDefinicion = (value: string) => {
+    const pasaAAdministrativo = value === 'walkover' || value === 'suspendido'
+    const hayEventos =
+      golesForm.length > 0 ||
+      tarjetasForm.length > 0 ||
+      cambiosForm.length > 0 ||
+      titLocal.size > 0 ||
+      ingLocal.size > 0 ||
+      titVis.size > 0 ||
+      ingVis.size > 0
+    if (pasaAAdministrativo && hayEventos) {
+      const ok = confirm(
+        value === 'walkover'
+          ? 'Al marcar el partido como W se limpiarÃ¡n los eventos deportivos registrados.'
+          : 'Al marcar el partido como suspendido se limpiarÃ¡n los eventos deportivos registrados.',
+      )
+      if (!ok) return
+      limpiarEventosDeportivos()
+    }
+    setDefinicion(value)
+    if (value !== 'penales') {
+      setPenL('')
+      setPenV('')
+    }
+    if (value !== 'walkover' && value !== 'penales') {
+      setGanadorId('')
+    }
+    if (value !== 'walkover') {
+      setNoPresentId('')
+    }
+  }
+
   const guardar = async () => {
-    if (!partido || !actaQ.data || !el || !ev) return
+    if (!partido || !actaQ.data || !el || !ev) {
+      toast.error('No se pudo guardar el acta. Revisa los campos obligatorios.')
+      return
+    }
     if (actaQ.data.cerrada) {
       toast.error('Esta acta está cerrada y no se puede editar.')
       return
@@ -386,7 +476,18 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       return
     }
 
-    if (!isSuspendido) {
+    if (isWalkover) {
+      if (!noPresentId || !ganadorId) {
+        toast.error('Selecciona el equipo ganador y el equipo que no se presentÃ³.')
+        return
+      }
+      if (noPresentId === ganadorId) {
+        toast.error('El equipo ganador no puede ser el mismo que el equipo que no se presentÃ³.')
+        return
+      }
+    }
+
+    if (!bloqueaEventosDeportivos) {
       for (const g of golesForm) {
         if (!g.jugador_id) continue
         if (!jugadoresEnCampo.has(g.jugador_id)) {
@@ -403,9 +504,10 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       }
     }
 
+    let payloadForLog: unknown = null
     setSaving(true)
     try {
-      const golesPayload = isSuspendido
+      const golesPayload = bloqueaEventosDeportivos
         ? []
         : golesForm
         .filter((g) => g.jugador_id && g.equipo_id)
@@ -416,7 +518,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
           tipo_gol: (g.tipo_gol ?? 'normal') as string,
         }))
 
-      const tarPayload = isSuspendido
+      const tarPayload = bloqueaEventosDeportivos
         ? []
         : tarjetasForm
         .filter((t) => t.jugador_id)
@@ -428,7 +530,9 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
           motivo: t.motivo.trim() || null,
         }))
 
-      const cambiosPayload = cambiosForm
+      const cambiosPayload = bloqueaEventosDeportivos
+        ? []
+        : cambiosForm
         .filter((c) => c.sale_id && c.entra_id && c.equipo_id)
         .map((c) => ({
           equipo_id: c.equipo_id,
@@ -438,7 +542,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
           observacion: c.obs.trim() || null,
         }))
 
-      await guardarActaCompleta({
+      const payload = {
         actaId: actaQ.data.id,
         partidoId: partido.id,
         equipoLocalId: el,
@@ -448,18 +552,20 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         escuela_arbitral_nombre: escuelaArbitral.trim() || null,
         observaciones: observaciones.trim() || null,
         definicion,
-        fue_tiempo_extra: isSuspendido ? false : fueTe,
-        fue_penales: isSuspendido ? false : fuePen,
-        penales_local: isSuspendido ? null : penL.trim() ? Number(penL) : null,
-        penales_visitante: isSuspendido ? null : penV.trim() ? Number(penV) : null,
+        fue_tiempo_extra: bloqueaEventosDeportivos ? false : fueTe,
+        fue_penales: bloqueaEventosDeportivos ? false : fuePen,
+        penales_local: bloqueaEventosDeportivos ? null : penL.trim() ? Number(penL) : null,
+        penales_visitante: bloqueaEventosDeportivos ? null : penV.trim() ? Number(penV) : null,
         equipo_ganador_id: isSuspendido ? null : ganadorId || null,
-        equipo_no_presentado_id: isSuspendido ? null : noPresentId || null,
-        partidoJugadores: pj,
+        equipo_no_presentado_id: isWalkover ? noPresentId || null : null,
+        partidoJugadores: bloqueaEventosDeportivos ? [] : pj,
         cambios: cambiosPayload,
         goles: golesPayload,
         tarjetas: tarPayload,
         tieneProgramacion: Boolean(partido.programacionId),
-      })
+      }
+      payloadForLog = payload
+      await guardarActaCompleta(payload)
       toast.success('Acta guardada correctamente.')
       void actaQ.refetch()
       void golesInitQ.refetch()
@@ -469,13 +575,19 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       void partidosQ.refetch()
       invalidatePartidos()
     } catch (e) {
-      toast.error(translateUserError(e, 'programacion'))
+      console.error('Error guardando acta', { payload: payloadForLog, error: e })
+      const msg = translateUserError(e, 'programacion')
+      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo guardar el acta. Revisa los campos obligatorios.')
     } finally {
       setSaving(false)
     }
   }
 
   const addGol = () => {
+    if (bloqueaEventosDeportivos) {
+      toast.error(isWalkover ? 'No se pueden agregar goles en un partido definido por W.' : 'El partido fue suspendido. No se pueden registrar eventos deportivos.')
+      return
+    }
     if (!el) return
     setGolesForm((prev) => [
       ...prev,
@@ -484,6 +596,10 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   }
 
   const addTarjeta = () => {
+    if (bloqueaEventosDeportivos) {
+      toast.error(isWalkover ? 'No se pueden agregar tarjetas en un partido definido por W.' : 'El partido fue suspendido. No se pueden registrar eventos deportivos.')
+      return
+    }
     if (!el) return
     setTarjetasForm((prev) => [
       ...prev,
@@ -492,6 +608,10 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   }
 
   const addCambio = (equipoId: string) => {
+    if (bloqueaEventosDeportivos) {
+      toast.error(isWalkover ? 'No se pueden registrar sustituciones en un partido definido por W.' : 'El partido fue suspendido. No se pueden registrar eventos deportivos.')
+      return
+    }
     setCambiosForm((prev) => [
       ...prev,
       { tempId: crypto.randomUUID(), equipo_id: equipoId, sale_id: '', entra_id: '', minuto: '', obs: '' },
@@ -718,7 +838,9 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                     )}
                     {definicion === 'walkover' && ganadorId && (
                       <p className="text-sm text-muted-foreground">
-                        {ganadorId === el ? localNombre : visitNombre} gana por W
+                        Ganador por W: {ganadorId === el ? localNombre : visitNombre}
+                        <br />
+                        Resultado administrativo: 3 - 0
                         {noPresentId ? ` — ${noPresentId === el ? localNombre : visitNombre} no se presentó` : ''}
                       </p>
                     )}
@@ -744,14 +866,28 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
               <CardDescription>Tiempo extra, penales o walkover según corresponda.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <RadioGroup value={definicion} onValueChange={(v) => setDefinicion(v)} className="grid gap-2 md:grid-cols-2">
-                {(['tiempo_reglamentario', 'tiempo_extra', 'penales', 'walkover', 'suspendido'] as const).map((v) => (
-                  <label key={v} className="flex items-center gap-2 rounded-md border p-2 text-sm">
-                    <RadioGroupItem value={v} id={`def-${v}`} />
-                    <span>{DEF_LABEL[v] ?? v}</span>
-                  </label>
-                ))}
-              </RadioGroup>
+              <div className="space-y-1">
+                <Label>DefiniciÃ³n</Label>
+                <Select value={definicion} onValueChange={cambiarDefinicion}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona la definiciÃ³n" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DEFINICIONES.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {isWalkover && (
+                <Alert>
+                  <AlertDescription>
+                    Ganador por W. Resultado administrativo: 3 - 0. No se registrarÃ¡n goles, tarjetas, sustituciones ni jugadores participantes.
+                  </AlertDescription>
+                </Alert>
+              )}
               {isSuspendido && (
                 <Alert variant="destructive">
                   <AlertDescription>
@@ -815,6 +951,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
             </CardContent>
           </Card>
 
+          {!bloqueaEventosDeportivos && (
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
@@ -935,7 +1072,9 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
               </CardContent>
             </Card>
           </div>
+          )}
 
+          {!bloqueaEventosDeportivos && (
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base">Cambios / sustituciones (opcional)</CardTitle>
@@ -1017,8 +1156,9 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
               )}
             </CardContent>
           </Card>
+          )}
 
-          {!isSuspendido && (
+          {!bloqueaEventosDeportivos && (
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
