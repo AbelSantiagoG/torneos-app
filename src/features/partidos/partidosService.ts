@@ -24,6 +24,7 @@ type PartidoRowDb = {
   equipo_local_id: string
   equipo_visitante_id: string
   fase_torneo_id?: string | null
+  grupo_id?: string | null
 }
 
 const DUPLICATE_MATCH_MSG = 'Este partido ya existe en otra jornada. Solo puede repetirse si el torneo es de ida y vuelta.'
@@ -87,7 +88,7 @@ export async function listPartidosFixtureTorneo(
   const p = await supabase
     .from('partidos')
     .select(
-      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id',
+      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id, grupo_id',
     )
     .eq('torneo_id', torneoId)
     .order('categoria_id', { ascending: true })
@@ -154,6 +155,7 @@ export async function listPartidosFixtureTorneo(
       orden: x.orden ?? 0,
       programacionId: null,
       faseTorneoId: x.fase_torneo_id ?? null,
+      grupoId: x.grupo_id ?? null,
     }
   })
 }
@@ -174,7 +176,7 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
   const partidosRes = await supabase
     .from('partidos')
     .select(
-      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id',
+      'id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id, grupo_id',
     )
     .in('id', [...pidSet])
   const partRows = throwOnError(partidosRes) as PartidoRowDb[]
@@ -254,6 +256,7 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
       orden: pr.orden ?? 0,
       observaciones,
       faseTorneoId: pr.fase_torneo_id ?? null,
+      grupoId: pr.grupo_id ?? null,
     })
   }
 
@@ -457,12 +460,13 @@ export type PartidoFixturePatch = {
   equipo_local_id?: string
   equipo_visitante_id?: string
   estado?: string
+  grupo_id?: string | null
 }
 
 export async function updatePartido(partidoId: string, patch: PartidoFixturePatch): Promise<void> {
   const currentRes = await supabase
     .from('partidos')
-    .select('id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id')
+    .select('id, torneo_id, categoria_id, jornada, orden, fecha_fixture, estado, equipo_local_id, equipo_visitante_id, fase_torneo_id, grupo_id')
     .eq('id', partidoId)
     .single()
   if (currentRes.error) throw toUserError(currentRes.error, 'fixture')
@@ -487,6 +491,7 @@ export type PartidoInsertInput = {
   fecha_fixture?: string | null
   orden?: number | null
   fase_torneo_id?: string | null
+  grupo_id?: string | null
 }
 
 export async function createPartidoManual(input: PartidoInsertInput): Promise<string> {
@@ -501,13 +506,17 @@ export async function createPartidoManual(input: PartidoInsertInput): Promise<st
   if (input.orden != null && !Number.isNaN(Number(input.orden)) && Number(input.orden) > 0) {
     orden = Number(input.orden)
   } else {
-    const maxQ = await supabase
+    let maxQBuilder = supabase
       .from('partidos')
       .select('orden')
       .eq('categoria_id', input.categoria_id)
       .eq('jornada', j)
       .order('orden', { ascending: false })
       .limit(1)
+    if (input.fase_torneo_id) maxQBuilder = maxQBuilder.eq('fase_torneo_id', input.fase_torneo_id)
+    if (input.grupo_id) maxQBuilder = maxQBuilder.eq('grupo_id', input.grupo_id)
+    else maxQBuilder = maxQBuilder.is('grupo_id', null)
+    const maxQ = await maxQBuilder
     if (!maxQ.error && maxQ.data?.[0]) {
       orden = (Number((maxQ.data[0] as { orden: number | null }).orden) || 0) + 1
     }
@@ -526,6 +535,7 @@ export async function createPartidoManual(input: PartidoInsertInput): Promise<st
       fase: 'regular',
       orden,
       fase_torneo_id: input.fase_torneo_id ?? null,
+      grupo_id: input.grupo_id ?? null,
     })
     .select('id')
     .single()

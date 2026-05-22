@@ -26,6 +26,8 @@ export type PartidoDashboardUi = {
   actaCerrada?: boolean | null
   /** Fase del torneo (tabla fases_torneo), si aplica. */
   faseTorneoId?: string | null
+  /** Grupo de la fase, si la fase se juega por grupos. */
+  grupoId?: string | null
   /** Observaciones de la fila en programaciones_partido (si existe). */
   observaciones?: string | null
   /** Estado de la fila en programaciones_partido (si existe). */
@@ -62,6 +64,7 @@ export function mapVwPartidoRow(row: Record<string, unknown>): PartidoDashboardU
     golesVisitante: gv != null && !Number.isNaN(gv) ? gv : null,
     equipoLocalId: pickStr(row, 'equipo_local_id', 'local_id') || null,
     equipoVisitanteId: pickStr(row, 'equipo_visitante_id', 'visitante_id') || null,
+    grupoId: pickStr(row, 'grupo_id') || null,
   }
 }
 

@@ -308,6 +308,14 @@ export async function eliminarJugador(jugadorId: string): Promise<void> {
   if (j.error) throw toUserError(j.error, 'jugador')
 }
 
+export async function eliminarJugadoresEquipoSeguro(equipoId: string, forzar = false): Promise<void> {
+  const { error } = await supabase.rpc('eliminar_jugadores_equipo_seguro', {
+    p_equipo_id: equipoId,
+    p_forzar: forzar,
+  })
+  if (error) throw toUserError(error, 'jugador')
+}
+
 export async function desactivarJugador(jugadorId: string): Promise<void> {
   const upJ = await supabase.from('jugadores').update({ estado: 'inactivo' }).eq('id', jugadorId)
   assertNoSupabaseError(upJ, 'jugador')

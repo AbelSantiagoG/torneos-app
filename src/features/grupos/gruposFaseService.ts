@@ -19,6 +19,7 @@ export type GrupoEquipoUi = {
   faseTorneoId: string
   equipoId: string
   equipoNombre: string
+  sigla: string | null
   equipoColor: string | null
   logoUrl: string | null
   logoPublicId: string | null
@@ -67,7 +68,8 @@ function mapGrupoEquipo(rowRaw: unknown): GrupoEquipoUi {
     grupoId: pickStr(row, 'grupo_id'),
     faseTorneoId: pickStr(row, 'fase_torneo_id', 'fase_id'),
     equipoId: pickStr(row, 'equipo_id'),
-    equipoNombre: pickStr(row, 'equipo_nombre', 'nombre_equipo', 'nombre') || 'Equipo',
+    equipoNombre: pickStr(row, 'equipo', 'equipo_nombre', 'nombre_equipo', 'nombre', 'teamName') || 'Equipo',
+    sigla: pickStr(row, 'sigla', 'equipo_sigla') || null,
     equipoColor: pickStr(row, 'equipo_color', 'color') || null,
     logoUrl: pickStr(row, 'logo_url', 'equipo_logo_url') || null,
     logoPublicId: pickStr(row, 'logo_public_id', 'equipo_logo_public_id') || null,
@@ -132,8 +134,8 @@ export async function listGrupoEquipos(faseTorneoId: string): Promise<GrupoEquip
   ) as { id: string; grupo_id: string; equipo_id: string }[]
   if (!rows.length) return []
   const equipos = throwOnError(
-    await supabase.from('equipos').select('id, nombre, color, logo_url, logo_public_id').in('id', rows.map((r) => r.equipo_id)),
-  ) as { id: string; nombre: string; color: string | null; logo_url: string | null; logo_public_id: string | null }[]
+    await supabase.from('equipos').select('id, nombre, sigla, color, logo_url, logo_public_id').in('id', rows.map((r) => r.equipo_id)),
+  ) as { id: string; nombre: string; sigla?: string | null; color: string | null; logo_url: string | null; logo_public_id: string | null }[]
   const equipoMap = new Map(equipos.map((e) => [e.id, e]))
   const faseMap = new Map(grupos.map((g) => [g.id, g.faseTorneoId]))
   return rows.map((row) => {
@@ -144,6 +146,7 @@ export async function listGrupoEquipos(faseTorneoId: string): Promise<GrupoEquip
       faseTorneoId: faseMap.get(row.grupo_id) ?? faseTorneoId,
       equipoId: row.equipo_id,
       equipoNombre: equipo?.nombre ?? 'Equipo',
+      sigla: equipo?.sigla ?? null,
       equipoColor: equipo?.color ?? null,
       logoUrl: equipo?.logo_url ?? null,
       logoPublicId: equipo?.logo_public_id ?? null,

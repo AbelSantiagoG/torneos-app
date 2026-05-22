@@ -177,6 +177,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [editOrden, setEditOrden] = useState('')
   const [editLocal, setEditLocal] = useState('')
   const [editVisit, setEditVisit] = useState('')
+  const [editGrupoId, setEditGrupoId] = useState('')
 
   const [createOpen, setCreateOpen] = useState(false)
   const [nuevoLocal, setNuevoLocal] = useState('')
@@ -184,6 +185,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [nuevoJornada, setNuevoJornada] = useState('1')
   const [nuevoOrden, setNuevoOrden] = useState('0')
   const [manualFaseId, setManualFaseId] = useState('')
+  const [manualGrupoId, setManualGrupoId] = useState('')
   const [createJornadaOpen, setCreateJornadaOpen] = useState(false)
   const [jornadaDraft, setJornadaDraft] = useState('1')
   const [deleteJornada, setDeleteJornada] = useState<{
@@ -344,9 +346,37 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   )
 
   const fixtureGruposPorGrupo = useMemo(() => {
+    const gruposMeta = new Map(gruposFase.map((grupo) => [grupo.id, grupo]))
+    const viewMap = new Map(fixtureGrupos.map((partido) => [partido.partidoId, partido]))
+    const manuales = fixtureEsPorGrupos
+      ? partidosCategoria.map((partido): FixtureGrupoUi => {
+          const meta = viewMap.get(partido.id)
+          const grupoId = partido.grupoId ?? meta?.grupoId ?? ''
+          const grupo = grupoId ? gruposMeta.get(grupoId) : null
+          return {
+            partidoId: partido.id,
+            grupoId,
+            grupoNombre: grupo?.nombre ?? meta?.grupoNombre ?? 'Partidos sin grupo asignado',
+            grupoOrden: grupo?.orden ?? meta?.grupoOrden ?? 999,
+            jornada: partido.jornada || meta?.jornada || 0,
+            orden: partido.orden ?? meta?.orden ?? 0,
+            estado: partido.estado || meta?.estado || 'pendiente_programar',
+            fecha: partido.fecha || meta?.fecha || '',
+            hora: partido.hora || meta?.hora || '',
+            cancha: partido.cancha || meta?.cancha || '',
+            equipoLocalNombre: partido.equipoLocalNombre || meta?.equipoLocalNombre || 'Local',
+            equipoVisitanteNombre: partido.equipoVisitanteNombre || meta?.equipoVisitanteNombre || 'Visitante',
+            golesLocal: partido.golesLocal ?? meta?.golesLocal ?? null,
+            golesVisitante: partido.golesVisitante ?? meta?.golesVisitante ?? null,
+          }
+        })
+      : fixtureGrupos
+    const seen = new Set<string>()
     const groups = new Map<string, FixtureGrupoUi[]>()
-    for (const partido of fixtureGrupos) {
-      const key = partido.grupoId || partido.grupoNombre
+    for (const partido of [...manuales, ...fixtureGrupos]) {
+      if (seen.has(partido.partidoId)) continue
+      seen.add(partido.partidoId)
+      const key = partido.grupoId || partido.grupoNombre || 'sin-grupo'
       groups.set(key, [...(groups.get(key) ?? []), partido])
     }
     return [...groups.entries()].map(([key, partidos]) => ({
@@ -356,7 +386,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       orden: partidos[0]?.grupoOrden ?? 0,
       partidos: partidos.sort((a, b) => a.jornada - b.jornada || a.orden - b.orden),
     })).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
-  }, [fixtureGrupos])
+  }, [fixtureEsPorGrupos, fixtureGrupos, gruposFase, partidosCategoria])
 
   const fixtureGrupoPorPartido = useMemo(
     () => new Map(fixtureGrupos.map((p) => [p.partidoId, p])),
@@ -386,13 +416,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     const gruposMap = new Map<string, { key: string; nombre: string; orden: number; jornadas: Map<number, PartidoListaUi[]> }>()
     for (const partido of pendientesSorteo) {
       const meta = fixtureGrupoPorPartido.get(partido.id)
-      const key = meta?.grupoId || meta?.grupoNombre || 'sin-grupo'
+      const grupo = partido.grupoId ? gruposFase.find((item) => item.id === partido.grupoId) : null
+      const key = partido.grupoId || meta?.grupoId || meta?.grupoNombre || 'sin-grupo'
       const current =
         gruposMap.get(key) ??
         {
           key,
-          nombre: meta?.grupoNombre || 'Sin grupo asignado',
-          orden: meta?.grupoOrden ?? 999,
+          nombre: grupo?.nombre ?? meta?.grupoNombre ?? 'Partidos sin grupo asignado',
+          orden: grupo?.orden ?? meta?.grupoOrden ?? 999,
           jornadas: new Map<number, PartidoListaUi[]>(),
         }
       const jornada = partido.jornada || meta?.jornada || 0
@@ -410,7 +441,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           .sort((a, b) => a.jornada - b.jornada),
       }))
       .sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
-  }, [fixtureEsPorGrupos, fixtureGrupoPorPartido, pendientesSorteo, selectedCategoria, sorteoCategoria])
+  }, [fixtureEsPorGrupos, fixtureGrupoPorPartido, gruposFase, pendientesSorteo, selectedCategoria, sorteoCategoria])
 
   const grupoEquiposPorGrupo = useMemo(() => {
     const groups = new Map<string, GrupoEquipoUi[]>()
@@ -419,6 +450,32 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
     return groups
   }, [grupoEquipos])
+
+  const manualFase = useMemo(
+    () => fasesList.find((fase) => fase.id === manualFaseId) ?? null,
+    [fasesList, manualFaseId],
+  )
+  const manualEsPorGrupos = isFasePorGrupos(manualFase?.tipo)
+
+  const equiposManual = useMemo(() => {
+    if (!manualEsPorGrupos) return equiposCat.map((equipo) => ({ id: equipo.id, nombre: equipo.nombre, sigla: equipo.sigla ?? null }))
+    if (!manualGrupoId) return []
+    return (grupoEquiposPorGrupo.get(manualGrupoId) ?? []).map((item) => ({
+      id: item.equipoId,
+      nombre: item.equipoNombre,
+      sigla: item.sigla,
+    }))
+  }, [equiposCat, grupoEquiposPorGrupo, manualEsPorGrupos, manualGrupoId])
+
+  const equiposEdit = useMemo(() => {
+    if (!fixtureEsPorGrupos) return equiposCat.map((equipo) => ({ id: equipo.id, nombre: equipo.nombre, sigla: equipo.sigla ?? null }))
+    if (!editGrupoId) return []
+    return (grupoEquiposPorGrupo.get(editGrupoId) ?? []).map((item) => ({
+      id: item.equipoId,
+      nombre: item.equipoNombre,
+      sigla: item.sigla,
+    }))
+  }, [editGrupoId, equiposCat, fixtureEsPorGrupos, grupoEquiposPorGrupo])
 
   const equiposAsignadosEnFase = useMemo(
     () => new Set(grupoEquipos.map((item) => item.equipoId)),
@@ -492,7 +549,20 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     ].some((token) => msg.includes(token))
   }
 
-  const selectedFaseIdForRpc = () => selectedFixtureFase || faseActualFixture?.id || null
+  const requireFaseEspecifica = (accion = 'realizar esta acciÃ³n'): FaseTorneoUi | null => {
+    if (!selectedFixtureFase) {
+      toast.error(`Selecciona una fase especÃ­fica para ${accion}.`)
+      return null
+    }
+    const fase = fasesList.find((item) => item.id === selectedFixtureFase) ?? null
+    if (!fase) {
+      toast.error('Selecciona una fase especÃ­fica.')
+      return null
+    }
+    return fase
+  }
+
+  const selectedFaseIdForRpc = () => selectedFixtureFase || null
 
   const resetFaseForm = () => {
     setFaseNombre('')
@@ -503,6 +573,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }
 
   const openCrearJornada = () => {
+    if (!requireFaseEspecifica('realizar esta acciÃ³n')) return
     const next = jornadas.length ? Math.max(...jornadas) + 1 : 1
     setJornadaDraft(String(next))
     setCreateJornadaOpen(true)
@@ -517,19 +588,27 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setNuevoJornada(String(jornada))
     setNuevoOrden('0')
     setManualFaseId(selectedFixtureFase)
+    setManualGrupoId('')
+    setNuevoLocal('')
+    setNuevoVisit('')
     setCreateJornadaOpen(false)
     setCreateOpen(true)
   }
 
-  const openCrearPartidoEnJornada = (jornada: number) => {
+  const openCrearPartidoEnJornada = (jornada: number, grupoId?: string | null) => {
+    if (!requireFaseEspecifica('crear partidos')) return
     setNuevoJornada(String(jornada))
     setNuevoOrden('0')
     setManualFaseId(selectedFixtureFase)
+    setManualGrupoId(grupoId ?? '')
+    setNuevoLocal('')
+    setNuevoVisit('')
     setCreateOpen(true)
   }
 
   const openDeleteJornada = (jornada: number, grupoId?: string | null, grupoNombre?: string | null) => {
     if (!selectedCategoria) return
+    if (!requireFaseEspecifica('realizar esta acciÃ³n')) return
     setDeleteJornada({ jornada, grupoId: grupoId ?? null, grupoNombre: grupoNombre ?? null })
   }
 
@@ -871,6 +950,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       toast.error('Selecciona una categoría.')
       return
     }
+    const faseObjetivo = requireFaseEspecifica('realizar esta acciÃ³n')
+    if (!faseObjetivo) return
     setGenerandoFixture(true)
     try {
       const nEq = await countEquiposEnCategoria(selectedCategoria)
@@ -878,7 +959,6 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.error('Se necesitan al menos dos equipos en la categoría para generar el fixture.')
         return
       }
-      const faseObjetivo = faseActualFixture
       const tipoFase = String(faseObjetivo?.tipo ?? 'todos_contra_todos')
 
       if (faseObjetivo && isFasePorGrupos(tipoFase)) {
@@ -928,20 +1008,35 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setEditOrden(String(p.orden ?? 0))
     setEditLocal(p.equipoLocalId ?? '')
     setEditVisit(p.equipoVisitanteId ?? '')
+    setEditGrupoId(p.grupoId ?? '')
   }
 
   const saveEdit = async () => {
     if (!editPartido) return
+    if (fixtureEsPorGrupos && !editGrupoId) {
+      toast.error('Selecciona un grupo para crear partidos en esta fase.')
+      return
+    }
+    if (!editJornada || Number(editJornada) < 1) {
+      toast.error('No puedes crear un partido sin jornada.')
+      return
+    }
+    if (!editLocal || !editVisit || editLocal === editVisit) {
+      toast.error('El equipo local y visitante deben ser diferentes.')
+      return
+    }
     try {
       await updatePartido(editPartido.id, {
         jornada: Number(editJornada) || 0,
         orden: Number(editOrden) || 0,
         equipo_local_id: editLocal,
         equipo_visitante_id: editVisit,
+        grupo_id: fixtureEsPorGrupos ? editGrupoId : null,
       })
       toast.success('Partido actualizado')
       setEditPartido(null)
       invalidatePartidos()
+      if (fixtureEsPorGrupos) void refetchFixtureGrupos()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
     }
@@ -998,7 +1093,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
     const faseId = selectedFaseIdForRpc()
     if (!faseId) {
-      toast.error('Selecciona una fase.')
+      toast.error('Selecciona una fase especÃ­fica para realizar esta acciÃ³n.')
       return
     }
     setDeleteFixtureLoading(true)
@@ -1034,9 +1129,27 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }
 
   const crearManual = async () => {
-    if (!torneoId || !selectedCategoria) return
+    if (!torneoId || !selectedCategoria) {
+      toast.error('Selecciona una categorÃ­a.')
+      return
+    }
+    const fase = fasesList.find((item) => item.id === manualFaseId) ?? null
+    if (!fase) {
+      toast.error('Selecciona una fase especÃ­fica.')
+      return
+    }
+    const jornada = Number(nuevoJornada)
+    if (!Number.isInteger(jornada) || jornada < 1) {
+      toast.error('No puedes crear un partido sin jornada.')
+      return
+    }
+    const esPorGrupos = isFasePorGrupos(fase.tipo)
+    if (esPorGrupos && !manualGrupoId) {
+      toast.error('Selecciona un grupo para crear partidos en esta fase.')
+      return
+    }
     if (!nuevoLocal || !nuevoVisit || nuevoLocal === nuevoVisit) {
-      toast.error('Selecciona equipos local y visitante distintos.')
+      toast.error('El equipo local y visitante deben ser diferentes.')
       return
     }
     try {
@@ -1045,21 +1158,24 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         categoria_id: selectedCategoria,
         equipo_local_id: nuevoLocal,
         equipo_visitante_id: nuevoVisit,
-        jornada: Number(nuevoJornada) || 1,
+        jornada,
         fase_torneo_id: manualFaseId || null,
+        grupo_id: esPorGrupos ? manualGrupoId : null,
         orden: (() => {
           const n = Number(nuevoOrden)
           return n > 0 ? n : undefined
         })(),
       })
-      toast.success('Partido creado')
+      toast.success('El partido fue creado correctamente.')
       setCreateOpen(false)
       setNuevoLocal('')
       setNuevoVisit('')
       setNuevoJornada('1')
       setNuevoOrden('0')
       setManualFaseId('')
+      setManualGrupoId('')
       invalidatePartidos()
+      if (esPorGrupos) void refetchFixtureGrupos()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
     }
@@ -1226,6 +1342,31 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <Label>Orden en la jornada</Label>
               <Input value={editOrden} onChange={(e) => setEditOrden(e.target.value)} type="number" />
             </div>
+            {fixtureEsPorGrupos && (
+              <div className="space-y-1">
+                <Label>Grupo</Label>
+                <Select
+                  value={editGrupoId || '__none__'}
+                  onValueChange={(v) => {
+                    setEditGrupoId(v === '__none__' ? '' : v)
+                    setEditLocal('')
+                    setEditVisit('')
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona un grupo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Selecciona un grupo</SelectItem>
+                    {gruposFase.map((grupo) => (
+                      <SelectItem key={grupo.id} value={grupo.id}>
+                        {grupo.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1">
               <Label>Local</Label>
               <Select value={editLocal} onValueChange={setEditLocal}>
@@ -1233,9 +1374,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {equiposCat.map((e) => (
+                  {equiposEdit.map((e) => (
                     <SelectItem key={e.id} value={e.id}>
-                      {e.nombre}
+                      {e.nombre}{e.sigla ? ` (${e.sigla})` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1248,9 +1389,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {equiposCat.map((e) => (
+                  {equiposEdit.map((e) => (
                     <SelectItem key={e.id} value={e.id}>
-                      {e.nombre}
+                      {e.nombre}{e.sigla ? ` (${e.sigla})` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1280,9 +1421,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <SelectValue placeholder="Equipo local" />
                 </SelectTrigger>
                 <SelectContent>
-                  {equiposCat.map((e) => (
+                  {equiposManual.map((e) => (
                     <SelectItem key={e.id} value={e.id}>
-                      {e.nombre}
+                      {e.nombre}{e.sigla ? ` (${e.sigla})` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1295,9 +1436,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <SelectValue placeholder="Equipo visitante" />
                 </SelectTrigger>
                 <SelectContent>
-                  {equiposCat.map((e) => (
+                  {equiposManual.map((e) => (
                     <SelectItem key={e.id} value={e.id}>
-                      {e.nombre}
+                      {e.nombre}{e.sigla ? ` (${e.sigla})` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1312,13 +1453,21 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <Input value={nuevoOrden} onChange={(e) => setNuevoOrden(e.target.value)} type="number" />
             </div>
             <div className="space-y-1">
-              <Label>Fase del torneo (opcional)</Label>
-              <Select value={manualFaseId || '__none__'} onValueChange={(v) => setManualFaseId(v === '__none__' ? '' : v)}>
+              <Label>Fase del torneo</Label>
+              <Select
+                value={manualFaseId || '__none__'}
+                onValueChange={(v) => {
+                  setManualFaseId(v === '__none__' ? '' : v)
+                  setManualGrupoId('')
+                  setNuevoLocal('')
+                  setNuevoVisit('')
+                }}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder="Sin fase" />
+                  <SelectValue placeholder="Selecciona una fase" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">Sin fase</SelectItem>
+                  <SelectItem value="__none__">Selecciona una fase</SelectItem>
                   {fasesList.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
                       {f.nombre}
@@ -1327,6 +1476,34 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 </SelectContent>
               </Select>
             </div>
+            {manualEsPorGrupos && (
+              <div className="space-y-1">
+                <Label>Grupo</Label>
+                <Select
+                  value={manualGrupoId || '__none__'}
+                  onValueChange={(v) => {
+                    setManualGrupoId(v === '__none__' ? '' : v)
+                    setNuevoLocal('')
+                    setNuevoVisit('')
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona un grupo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Selecciona un grupo</SelectItem>
+                    {gruposFase.map((grupo) => (
+                      <SelectItem key={grupo.id} value={grupo.id}>
+                        {grupo.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!manualGrupoId && (
+                  <p className="text-xs text-muted-foreground">En fases por grupos, el partido debe pertenecer a un grupo.</p>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -1571,7 +1748,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setFixtureOpen(true)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                    }}
+                  >
                     {fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar fixture'}
                   </Button>
                   <Button
@@ -1593,7 +1777,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     type="button"
                     size="sm"
                     onClick={() => {
+                      if (!requireFaseEspecifica('crear partidos')) return
                       setManualFaseId(selectedFixtureFase)
+                      setManualGrupoId('')
+                      setNuevoLocal('')
+                      setNuevoVisit('')
                       setCreateOpen(true)
                     }}
                     disabled={!selectedCategoria}
@@ -1615,7 +1803,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           {parLoading || (fixtureEsPorGrupos && gruposLoading) ? (
             <Skeleton className="h-64 w-full" />
           ) : fixtureEsPorGrupos ? (
-            fixtureGrupos.length === 0 ? (
+            fixtureGruposPorGrupo.length === 0 ? (
               <EmptyState
                 icon={Calendar}
                 title={gruposConEquiposAsignados ? 'Esta fase todavía no tiene fixture generado' : 'Sin grupos listos para fixture'}
@@ -1626,7 +1814,13 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 }
                 action={
                   gruposConEquiposAsignados ? (
-                    <Button type="button" variant="default" onClick={() => setFixtureOpen(true)}>
+                    <Button
+                      type="button"
+                      variant="default"
+                      onClick={() => {
+                        if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                      }}
+                    >
                       Generar fixture por grupos
                     </Button>
                   ) : (
@@ -1658,6 +1852,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   type="button"
                                   variant="outline"
                                   size="sm"
+                                  onClick={() => openCrearPartidoEnJornada(jornada, grupo.grupoId)}
+                                  disabled={!grupo.grupoId}
+                                >
+                                  <Plus className="mr-1 h-4 w-4" />
+                                  Agregar partido
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
                                   className="text-destructive"
                                   onClick={() => openDeleteJornada(jornada, grupo.grupoId, grupo.nombre)}
                                   disabled={deleteJornadaLoading}
@@ -1669,6 +1873,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                             </div>
                             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                               {partidosJornada.map((partido) => {
+                                const partidoFixture = partidosCategoria.find((item) => item.id === partido.partidoId)
                                 const jugado = isJugadoEstado(partido.estado)
                                 const programado = Boolean(partido.fecha || partido.hora || partido.cancha) && !jugado
                                 return (
@@ -1695,7 +1900,17 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                         {partido.cancha ? ` · ${partido.cancha}` : ''}
                                       </p>
                                     ) : null}
-                                    <div className="mt-3 flex justify-end">
+                                    <div className="mt-3 flex justify-end gap-2">
+                                      {partidoFixture && (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => openEdit(partidoFixture)}
+                                        >
+                                          <Edit className="h-3 w-3" />
+                                        </Button>
+                                      )}
                                       <Button
                                         type="button"
                                         variant="ghost"
@@ -1723,7 +1938,13 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               title="Sin partidos en esta categoría"
               description="Genera el fixture (todos contra todos) o crea partidos manualmente."
               action={
-                <Button type="button" variant="default" onClick={() => setFixtureOpen(true)}>
+                <Button
+                  type="button"
+                  variant="default"
+                  onClick={() => {
+                    if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                  }}
+                >
                   Generar fixture
                 </Button>
               }
@@ -2192,7 +2413,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                         logoUrl={item.logoUrl}
                                         logoPublicId={item.logoPublicId}
                                       />
-                                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.equipoNombre}</span>
+                                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                        {item.equipoNombre}
+                                        {item.sigla ? <span className="ml-2 text-xs font-normal text-muted-foreground">{item.sigla}</span> : null}
+                                      </span>
                                       <Select
                                         value={grupoMoverDraft[item.id] || '__none__'}
                                         onValueChange={(v) => setGrupoMoverDraft((prev) => ({ ...prev, [item.id]: v === '__none__' ? '' : v }))}

@@ -4,6 +4,7 @@ import {
   createJugadorConEquipo,
   desactivarJugador,
   eliminarJugador,
+  eliminarJugadoresEquipoSeguro,
   getJugadoresByEquipo,
   updateJugador,
   type JugadorCreateInput,
@@ -62,6 +63,11 @@ export function useJugadores(equipoId: string | undefined, categoriaId: string |
     onSuccess: invalidateEquipo,
   })
 
+  const deleteAllMut = useMutation({
+    mutationFn: ({ forzar }: { forzar: boolean }) => eliminarJugadoresEquipoSeguro(equipoId!, forzar),
+    onSuccess: invalidateEquipo,
+  })
+
   return {
     ...query,
     createJugador: createMut.mutateAsync,
@@ -69,11 +75,13 @@ export function useJugadores(equipoId: string | undefined, categoriaId: string |
     cambiarJugadorDeEquipo: transferMut.mutateAsync,
     desactivarJugador: deactivateMut.mutateAsync,
     eliminarJugador: deleteMut.mutateAsync,
+    eliminarJugadoresEquipo: deleteAllMut.mutateAsync,
     isMutating:
       createMut.isPending ||
       updateMut.isPending ||
       transferMut.isPending ||
       deactivateMut.isPending ||
-      deleteMut.isPending,
+      deleteMut.isPending ||
+      deleteAllMut.isPending,
   }
 }

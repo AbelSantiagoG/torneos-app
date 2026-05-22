@@ -133,6 +133,7 @@ export function EquiposPage() {
     cambiarJugadorDeEquipo,
     desactivarJugador,
     eliminarJugador,
+    eliminarJugadoresEquipo,
     isMutating: jugMutating,
   } = useJugadores(selectedEquipo?.id, selectedCategoria || undefined)
 
@@ -449,6 +450,37 @@ export function EquiposPage() {
     try {
       await eliminarJugador(jugadorId)
       toast.success('Jugador eliminado')
+    } catch (e) {
+      toast.error(translateUserError(e, 'jugador'))
+    }
+  }
+
+  const isAssociatedPlayersError = (error: unknown) => {
+    const msg = String((error as Error)?.message ?? error ?? '').toLowerCase()
+    return ['acta', 'goles', 'gol', 'tarjeta', 'asociad', 'forzar', 'relacionad'].some((token) => msg.includes(token))
+  }
+
+  const handleDeleteAllPlayers = async () => {
+    if (!selectedEquipo) return
+    const ok = confirm('Esto eliminará todos los jugadores de este equipo y sus registros asociados. ¿Deseas continuar?')
+    if (!ok) return
+    try {
+      try {
+        await eliminarJugadoresEquipo({ forzar: false })
+      } catch (e) {
+        if (!isAssociatedPlayersError(e)) throw e
+        const force = confirm(
+          'Estos jugadores tienen información asociada en actas, goles o tarjetas. Si continúas, también se eliminarán esos registros.',
+        )
+        if (!force) return
+        await eliminarJugadoresEquipo({ forzar: true })
+      }
+      qc.setQueryData(jugadoresQueryKey(selectedEquipo.id), [])
+      if (selectedCategoria) {
+        void qc.invalidateQueries({ queryKey: jugadoresCategoriaQueryKey(selectedCategoria) })
+        void qc.invalidateQueries({ queryKey: equiposQueryKey(selectedCategoria) })
+      }
+      toast.success('Jugadores eliminados correctamente.')
     } catch (e) {
       toast.error(translateUserError(e, 'jugador'))
     }
@@ -1009,6 +1041,17 @@ export function EquiposPage() {
                 <Button type="button" size="sm" variant="outline" onClick={() => jugadoresImportRef.current?.click()} disabled={jugMutating}>
                   <Upload className="mr-2 h-4 w-4" />
                   Importar jugadores
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive"
+                  onClick={() => void handleDeleteAllPlayers()}
+                  disabled={jugMutating || jugadoresEquipo.length === 0}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Eliminar todos los jugadores
                 </Button>
                 <Button size="sm" onClick={() => setPlayerDialogOpen(true)} disabled={jugMutating}>
                   <UserPlus className="mr-2 h-4 w-4" />
