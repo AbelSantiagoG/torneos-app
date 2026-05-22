@@ -457,11 +457,17 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   }
 
   const guardar = async () => {
-    if (!partido || !actaQ.data || !el || !ev) {
-      toast.error('No se pudo guardar el acta. Revisa los campos obligatorios.')
+    if (!partido) {
+      toast.error('Selecciona un partido antes de guardar el acta.')
+      console.error('Error guardando acta', { reason: 'partido no cargado', partidoId })
       return
     }
-    if (actaQ.data.cerrada) {
+    if (!el || !ev) {
+      toast.error('No se pudo guardar el acta porque faltan los equipos del partido.')
+      console.error('Error guardando acta', { reason: 'equipos del partido incompletos', partido })
+      return
+    }
+    if (actaQ.data?.cerrada) {
       toast.error('Esta acta está cerrada y no se puede editar.')
       return
     }
@@ -505,7 +511,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
 
     if (isWalkover) {
       const payload = {
-        actaId: actaQ.data.id,
+        actaId: actaQ.data?.id ?? null,
         partidoId: partido.id,
         definicion: 'walkover',
         equipo_ganador_id: ganadorId,
@@ -524,10 +530,20 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       } catch (e) {
         console.error('Error guardando acta', { payload, error: e })
         const msg = translateUserError(e, 'programacion')
-        toast.error(msg && msg !== 'No se pudo completar la operaciÃ³n.' ? msg : 'No se pudo guardar el acta por W.')
+        toast.error(
+          msg.includes('Falta completar') || msg.includes('No se pudo guardar la informaci')
+            ? 'No se pudo guardar el acta por W. Revisa ganador y equipo no presentado; el detalle tÃ©cnico quedÃ³ en consola.'
+            : msg,
+        )
       } finally {
         setSaving(false)
       }
+      return
+    }
+
+    if (!actaQ.data) {
+      toast.error('No se pudo cargar o crear el acta del partido. Intenta abrir el acta nuevamente.')
+      console.error('Error guardando acta', { reason: 'actaQ sin data', partidoId: partido.id, error: actaQ.error })
       return
     }
 
@@ -621,7 +637,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     } catch (e) {
       console.error('Error guardando acta', { payload: payloadForLog, error: e })
       const msg = translateUserError(e, 'programacion')
-      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo guardar el acta. Revisa los campos obligatorios.')
+      toast.error(msg.includes('Falta completar') ? 'No se pudo guardar el acta. Revisa la definiciÃ³n y los campos de resultado.' : msg)
     } finally {
       setSaving(false)
     }

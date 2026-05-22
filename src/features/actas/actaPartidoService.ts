@@ -173,7 +173,7 @@ export async function guardarActaAdministrativa(input: {
   arbitro_nombre: string | null
   escuela_arbitral_nombre: string | null
   observaciones: string | null
-}): Promise<ActaPartidoRow> {
+}): Promise<void> {
   const payload = {
     partido_id: input.partidoId,
     definicion: input.definicion,
@@ -194,10 +194,9 @@ export async function guardarActaAdministrativa(input: {
       .from('actas_partido')
       .update(payload)
       .eq('id', input.actaId)
-      .select(ACTA_SELECT)
-      .single()
     if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
-    return assertNoSupabaseError(r, 'programacion') as ActaPartidoRow
+    assertNoSupabaseError(r, 'programacion')
+    return
   }
 
   const existing = await getActaByPartido(input.partidoId)
@@ -206,15 +205,14 @@ export async function guardarActaAdministrativa(input: {
       .from('actas_partido')
       .update(payload)
       .eq('id', existing.id)
-      .select(ACTA_SELECT)
-      .single()
     if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
-    return assertNoSupabaseError(r, 'programacion') as ActaPartidoRow
+    assertNoSupabaseError(r, 'programacion')
+    return
   }
 
-  const r = await supabase.from('actas_partido').insert(payload).select(ACTA_SELECT).single()
+  const r = await supabase.from('actas_partido').insert(payload)
   if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
-  return assertNoSupabaseError(r, 'programacion') as ActaPartidoRow
+  assertNoSupabaseError(r, 'programacion')
 }
 
 export async function listGolesPartido(partidoId: string): Promise<GolActaRow[]> {
