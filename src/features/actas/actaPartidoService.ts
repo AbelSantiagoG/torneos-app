@@ -164,6 +164,74 @@ export async function updateActaCabecera(actaId: string, patch: Partial<ActaPart
   }
 }
 
+async function limpiarEventosDeportivosPartido(partidoId: string): Promise<void> {
+  const delG = await supabase.from('goles').delete().eq('partido_id', partidoId)
+  assertNoSupabaseError(delG, 'programacion')
+  const delT = await supabase.from('tarjetas').delete().eq('partido_id', partidoId)
+  assertNoSupabaseError(delT, 'programacion')
+  const delPj = await supabase.from('partido_jugadores').delete().eq('partido_id', partidoId)
+  assertNoSupabaseError(delPj, 'programacion')
+  const delC = await supabase.from('cambios_partido').delete().eq('partido_id', partidoId)
+  assertNoSupabaseError(delC, 'programacion')
+}
+
+async function aplicarEstadoPartidoYProgramacion(input: {
+  partidoId: string
+  definicion: DefinicionPartidoDb | string
+  tieneProgramacion: boolean
+}): Promise<void> {
+  const suspendido = input.definicion === 'suspendido'
+  const nuevoEstadoPartido = suspendido ? 'suspendido' : 'jugado'
+
+  let upP = await supabase.from('partidos').update({ estado: nuevoEstadoPartido }).eq('id', input.partidoId)
+  if (upP.error && suspendido) {
+    upP = await supabase
+      .from('partidos')
+      .update({ estado: input.tieneProgramacion ? 'programado' : 'pendiente_programar' })
+      .eq('id', input.partidoId)
+  }
+  if (upP.error) {
+    console.error('Error actualizando estado del partido desde acta', {
+      partidoId: input.partidoId,
+      estado: nuevoEstadoPartido,
+      error: upP.error,
+    })
+  }
+  assertNoSupabaseError(upP, 'programacion')
+
+  if (!input.tieneProgramacion) return
+
+  const prog = await supabase.from('programaciones_partido').select('id').eq('partido_id', input.partidoId).maybeSingle()
+  const pid = (prog.data as { id?: string } | null)?.id
+  if (!pid) return
+
+  const estadoProg = suspendido ? 'suspendido' : 'jugado'
+  const upPr = await supabase.from('programaciones_partido').update({ estado: estadoProg }).eq('id', pid)
+  if (upPr.error && suspendido) {
+    console.warn('No se pudo marcar la programación como suspendida.', { programacionId: pid, error: upPr.error })
+    return
+  }
+  if (upPr.error) {
+    console.error('Error actualizando programación desde acta', { programacionId: pid, error: upPr.error })
+  }
+  assertNoSupabaseError(upPr, 'programacion')
+}
+
+async function postGuardarActaAdministrativa(input: {
+  partidoId: string
+  definicion: DefinicionPartidoDb | string
+  tieneProgramacion?: boolean
+}): Promise<void> {
+  if (input.definicion === 'walkover' || input.definicion === 'suspendido') {
+    await limpiarEventosDeportivosPartido(input.partidoId)
+  }
+  await aplicarEstadoPartidoYProgramacion({
+    partidoId: input.partidoId,
+    definicion: input.definicion,
+    tieneProgramacion: input.tieneProgramacion ?? false,
+  })
+}
+
 export async function guardarActaAdministrativa(input: {
   actaId?: string | null
   partidoId: string
@@ -173,6 +241,7 @@ export async function guardarActaAdministrativa(input: {
   arbitro_nombre: string | null
   escuela_arbitral_nombre: string | null
   observaciones: string | null
+  tieneProgramacion?: boolean
 }): Promise<void> {
   const payload = {
     partido_id: input.partidoId,
@@ -196,6 +265,7 @@ export async function guardarActaAdministrativa(input: {
       .eq('id', input.actaId)
     if (r.error) console.error('Error guardando acta', { payload, error: r.error })
     assertNoSupabaseError(r, 'programacion')
+    await postGuardarActaAdministrativa(input)
     return
   }
 
@@ -207,12 +277,14 @@ export async function guardarActaAdministrativa(input: {
       .eq('id', existing.id)
     if (r.error) console.error('Error guardando acta', { payload, error: r.error })
     assertNoSupabaseError(r, 'programacion')
+    await postGuardarActaAdministrativa(input)
     return
   }
 
   const r = await supabase.from('actas_partido').insert(payload)
   if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
   assertNoSupabaseError(r, 'programacion')
+  await postGuardarActaAdministrativa(input)
 }
 
 export async function listGolesPartido(partidoId: string): Promise<GolActaRow[]> {
@@ -391,37 +463,11 @@ export async function guardarActaCompleta(input: {
         ? 'programado'
         : 'pendiente_programar'
 
-  let upP = await supabase.from('partidos').update({ estado: nuevoEstadoPartido }).eq('id', input.partidoId)
-  if (upP.error && suspendido) {
-    console.warn('No se pudo marcar el partido como suspendido; se conserva como programado.', {
-      partidoId: input.partidoId,
-      error: upP.error,
-    })
-    upP = await supabase
-      .from('partidos')
-      .update({ estado: input.tieneProgramacion ? 'programado' : 'pendiente_programar' })
-      .eq('id', input.partidoId)
-  }
-  if (upP.error) console.error('Error actualizando estado del partido desde acta', { partidoId: input.partidoId, estado: nuevoEstadoPartido, error: upP.error })
-  assertNoSupabaseError(upP, 'programacion')
-
-  if (input.tieneProgramacion) {
-    const prog = await supabase.from('programaciones_partido').select('id').eq('partido_id', input.partidoId).maybeSingle()
-    const pid = (prog.data as { id?: string } | null)?.id
-    if (pid && nuevoEstadoPartido === 'jugado') {
-      const upPr = await supabase.from('programaciones_partido').update({ estado: 'jugado' }).eq('id', pid)
-      if (upPr.error) console.error('Error actualizando programaciÃ³n a jugado desde acta', { programacionId: pid, error: upPr.error })
-      assertNoSupabaseError(upPr, 'programacion')
-    } else if (pid && nuevoEstadoPartido === 'suspendido') {
-      const upPr = await supabase.from('programaciones_partido').update({ estado: 'suspendido' }).eq('id', pid)
-      if (upPr.error) {
-        console.warn('No se pudo marcar la programaciÃ³n como suspendida; el acta quedÃ³ documentada.', {
-          programacionId: pid,
-          error: upPr.error,
-        })
-      }
-    }
-  }
+  await aplicarEstadoPartidoYProgramacion({
+    partidoId: input.partidoId,
+    definicion: input.definicion,
+    tieneProgramacion: input.tieneProgramacion,
+  })
 
   return { golesLocal: local, golesVisitante: vis }
 }

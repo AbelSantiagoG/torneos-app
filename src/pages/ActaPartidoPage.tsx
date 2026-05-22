@@ -38,6 +38,7 @@ import {
 } from '@/features/actas/actaPartidoService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
 import { partidosTorneoQueryKey } from '@/features/partidos/usePartidosTorneo'
+import { invalidateEstadisticasQueries } from '@/features/estadisticas/estadisticasCache'
 import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/uploadService'
 import { isJugadoEstado } from '@/features/partidos/partidosUi'
 import type { DefinicionPartidoDb, TipoGolDb, TipoTarjetaActaDb } from '@/types/database'
@@ -421,6 +422,27 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
   }
 
+  const refrescarTrasGuardarActa = async () => {
+    void actaQ.refetch()
+    void golesInitQ.refetch()
+    void tarjetasInitQ.refetch()
+    void pjInitQ.refetch()
+    void cambiosInitQ.refetch()
+    void partidosQ.refetch()
+    invalidatePartidos()
+    if (torneoId) {
+      invalidateEstadisticasQueries(qc, {
+        torneoId,
+        categoriaId: partido?.categoriaId ?? categoriaId,
+        faseId: partido?.faseTorneoId ?? undefined,
+      })
+      await qc.refetchQueries({
+        queryKey: ['estadisticas', torneoId],
+        type: 'active',
+      })
+    }
+  }
+
   const fueTe = definicion === 'tiempo_extra'
   const fuePen = definicion === 'penales'
 
@@ -522,11 +544,17 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       }
       setSaving(true)
       try {
-        await guardarActaAdministrativa(payload)
+        await guardarActaAdministrativa({
+          ...payload,
+          tieneProgramacion: Boolean(partido.programacionId),
+        })
         toast.success('Acta guardada correctamente.')
-        void actaQ.refetch()
-        void partidosQ.refetch()
-        invalidatePartidos()
+        try {
+          await refrescarTrasGuardarActa()
+        } catch (refErr) {
+          console.error('Error en estadísticas', { context: 'refresco tras acta W', error: refErr })
+          toast.warning('El acta fue guardada, pero no se pudieron refrescar las estadísticas.')
+        }
       } catch (e) {
         console.error('Error guardando acta', { payload, error: e })
         const msg = translateUserError(e, 'programacion')
@@ -626,13 +654,12 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       payloadForLog = payload
       await guardarActaCompleta(payload)
       toast.success('Acta guardada correctamente.')
-      void actaQ.refetch()
-      void golesInitQ.refetch()
-      void tarjetasInitQ.refetch()
-      void pjInitQ.refetch()
-      void cambiosInitQ.refetch()
-      void partidosQ.refetch()
-      invalidatePartidos()
+      try {
+        await refrescarTrasGuardarActa()
+      } catch (refErr) {
+        console.error('Error en estadísticas', { context: 'refresco tras acta', error: refErr })
+        toast.warning('El acta fue guardada, pero no se pudieron refrescar las estadísticas.')
+      }
     } catch (e) {
       console.error('Error guardando acta', { payload: payloadForLog, error: e })
       const msg = translateUserError(e, 'programacion')

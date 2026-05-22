@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
 import { partidoIdsParaEstadisticasFase } from '@/features/fases/fasesTorneoService'
+import { fetchTablaPosicionesConfig, type TablaPosicionRow } from '@/features/estadisticas/tablaPosicionesService'
 
 export type VistaRow = Record<string, unknown>
 
@@ -55,18 +56,23 @@ export async function fetchEstadisticasFiltradas(
 
   if (!faseTorneoId) return { tabla, goleadores, disciplina }
 
-  const rpcTabla = await fetchTablaPosicionesPorFase(faseTorneoId)
-  if (rpcTabla.length) {
-    tabla = rpcTabla
+  const configTabla = await fetchTablaPosicionesConfig(faseTorneoId)
+  if (configTabla.length) {
+    tabla = configTabla.map((r) => tablaPosicionToVistaRow(r))
   } else {
-    tabla = filterVistaRowsPorFase(tabla, faseTorneoId)
+    const rpcTabla = await fetchTablaPosicionesPorFase(faseTorneoId)
+    if (rpcTabla.length) {
+      tabla = rpcTabla
+    } else {
+      tabla = filterVistaRowsPorFase(tabla, faseTorneoId)
+    }
   }
 
   const partidoIds = new Set(await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId))
   if (partidoIds.size) {
     goleadores = filterRowsPorPartidos(goleadores, partidoIds)
     disciplina = filterRowsPorPartidos(disciplina, partidoIds)
-    if (!rpcTabla.length) {
+    if (!configTabla.length) {
       tabla = filterRowsPorPartidos(tabla, partidoIds)
     }
   } else {
@@ -173,27 +179,90 @@ function criterioValue(row: VistaRow, criterio: CriterioClasificacion): number {
   if (criterio === 'puntos') return pickNum(row, 'puntos', 'pts')
   if (criterio === 'diferencia_gol') return pickNum(row, 'dg', 'diferencia_gol', 'gol_diferencia')
   if (criterio === 'goles_favor') return pickNum(row, 'gf', 'goles_favor', 'goles_a_favor')
-  if (criterio === 'goles_contra') return -pickNum(row, 'gc', 'goles_contra', 'goles_en_contra')
+  if (criterio === 'goles_contra') return pickNum(row, 'gc', 'goles_contra', 'goles_en_contra')
   if (criterio === 'fair_play') {
-    return -(
-      pickNum(row, 'puntos_fair_play', 'fair_play') ||
-      pickNum(row, 'amarillas', 'tarjetas_amarillas') + pickNum(row, 'rojas', 'tarjetas_rojas') * 3
-    )
+    return pickNum(row, 'puntos_fair_play', 'fair_play', 'fairplay')
   }
   if (criterio === 'partidos_ganados') return pickNum(row, 'pg', 'ganados', 'partidos_ganados')
   return 0
 }
 
+function comparePorCriterio(a: VistaRow, b: VistaRow, criterio: CriterioClasificacion): number {
+  const av = criterioValue(a, criterio)
+  const bv = criterioValue(b, criterio)
+  if (av === bv) return 0
+  if (criterio === 'goles_contra') return av - bv
+  return bv - av
+}
+
 export function ordenarTablaPorCriterios(rows: VistaRow[], criterios: CriterioClasificacion[]): VistaRow[] {
-  if (!rows.length || !criterios.length) return rows
+  const orden = criterios.length ? criterios : CRITERIOS_DEFECTO_ORDEN
+  if (!rows.length) return rows
   return [...rows].sort((a, b) => {
-    for (const criterio of criterios) {
-      const av = criterioValue(a, criterio)
-      const bv = criterioValue(b, criterio)
-      if (av !== bv) return bv - av
+    for (const criterio of orden) {
+      const cmp = comparePorCriterio(a, b, criterio)
+      if (cmp !== 0) return cmp
     }
     return pickStr(a, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre').localeCompare(
       pickStr(b, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre'),
     )
   })
+}
+
+const CRITERIOS_DEFECTO_ORDEN: CriterioClasificacion[] = ['puntos', 'diferencia_gol', 'goles_favor', 'fair_play']
+
+function tablaPosicionToVistaRow(r: TablaPosicionRow): VistaRow {
+  return {
+    equipo_id: r.equipo_id,
+    equipo_nombre: r.equipo_nombre,
+    logo_url: r.logo_url,
+    logo_public_id: r.logo_public_id,
+    posicion: r.posicion,
+    pj: r.pj,
+    pg: r.pg,
+    pe: r.pe,
+    pp: r.pp,
+    gf: r.gf,
+    gc: r.gc,
+    dg: r.dg,
+    pts: r.pts,
+    puntos: r.pts,
+    fair_play: r.fair_play,
+    puntos_fair_play: r.fair_play,
+    pj_base: r.pj_base,
+    pg_base: r.pg_base,
+    pe_base: r.pe_base,
+    pp_base: r.pp_base,
+    gf_base: r.gf_base,
+    gc_base: r.gc_base,
+    pts_base: r.pts_base,
+    fair_play_base: r.fair_play_base,
+  }
+}
+
+export function tablaPosicionRowsFromVista(rows: VistaRow[]): TablaPosicionRow[] {
+  return rows.map((row) => ({
+    equipo_id: pickStr(row, 'equipo_id'),
+    equipo_nombre: pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre'),
+    logo_url: pickStr(row, 'logo_url') || null,
+    logo_public_id: pickStr(row, 'logo_public_id') || null,
+    posicion: pickNum(row, 'posicion', 'pos'),
+    pj: pickNum(row, 'pj'),
+    pg: pickNum(row, 'pg'),
+    pe: pickNum(row, 'pe'),
+    pp: pickNum(row, 'pp'),
+    gf: pickNum(row, 'gf'),
+    gc: pickNum(row, 'gc'),
+    dg: pickNum(row, 'dg'),
+    pts: pickNum(row, 'pts', 'puntos'),
+    fair_play: pickNum(row, 'fair_play', 'puntos_fair_play', 'fairplay'),
+    pj_base: pickNum(row, 'pj_base'),
+    pg_base: pickNum(row, 'pg_base'),
+    pe_base: pickNum(row, 'pe_base'),
+    pp_base: pickNum(row, 'pp_base'),
+    gf_base: pickNum(row, 'gf_base'),
+    gc_base: pickNum(row, 'gc_base'),
+    pts_base: pickNum(row, 'pts_base'),
+    fair_play_base: pickNum(row, 'fair_play_base'),
+  }))
 }

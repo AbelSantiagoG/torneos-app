@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useCallback, useEffect, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Trophy, Target, AlertTriangle, ArrowDown, ArrowUp } from 'lucide-react'
+import { Trophy, Target, AlertTriangle } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
@@ -30,21 +28,18 @@ import { getDashboardCounts } from '@/features/dashboard/dashboardService'
 import {
   fetchEstadisticasFiltradas,
   formatVistaCell,
-  CRITERIOS_CLASIFICACION,
-  ordenarTablaPorCriterios,
   rowKeysForTable,
   type CriterioClasificacion,
   type VistaRow,
 } from '@/features/estadisticas/estadisticasService'
+import { CRITERIOS_DEFECTO } from '@/features/estadisticas/criteriosClasificacionService'
 import { listFasesPorCategoria } from '@/features/fases/fasesTorneoService'
 import { pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
-
+import { estadisticasQueryKey, invalidateEstadisticasQueries } from '@/features/estadisticas/estadisticasCache'
+import { CriteriosClasificacionPanel } from '@/features/estadisticas/CriteriosClasificacionPanel'
+import { TablaPosicionesTable } from '@/features/estadisticas/TablaPosicionesTable'
 function pickNombreEquipo(row: VistaRow): string {
-  return (
-    pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club') ||
-    pickStr(row, 'nombre') ||
-    '—'
-  )
+  return pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club') || pickStr(row, 'nombre') || '—'
 }
 
 function pickNombreJugador(row: VistaRow): string {
@@ -52,42 +47,27 @@ function pickNombreJugador(row: VistaRow): string {
 }
 
 export function EstadisticasPage() {
+  const qc = useQueryClient()
   const [selectedCategoria, setSelectedCategoria] = useState('')
   const [selectedFase, setSelectedFase] = useState('')
   const [activeTab, setActiveTab] = useState('posiciones')
-  const [criterios, setCriterios] = useState<CriterioClasificacion[]>([
-    'puntos',
-    'diferencia_gol',
-    'goles_favor',
-    'goles_contra',
-    'fair_play',
-    'partidos_directos',
-    'partidos_ganados',
-    'sorteo_manual',
-  ])
+  const [criteriosOrden, setCriteriosOrden] = useState<CriterioClasificacion[]>(CRITERIOS_DEFECTO)
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
 
   const { data: categorias = [] } = useCategorias(torneoId)
   const statsQ = useQuery({
-    queryKey: ['estadisticas', torneoId, selectedCategoria, selectedFase],
+    queryKey: estadisticasQueryKey(torneoId ?? '', selectedCategoria, selectedFase),
     enabled: Boolean(torneoId && selectedCategoria),
     queryFn: () => fetchEstadisticasFiltradas(torneoId!, selectedCategoria, selectedFase),
   })
-  const statsData = statsQ.data
-  const statsLoading = statsQ.isLoading
-  const statsError = statsQ.error
 
   const countsQ = useQuery({
     queryKey: ['estadisticas-partidos-jugados', torneoId],
     enabled: Boolean(torneoId),
     queryFn: () => getDashboardCounts(torneoId!),
   })
-
-  useEffect(() => {
-    if (categorias.length && !selectedCategoria) setSelectedCategoria(categorias[0]!.id)
-  }, [categorias, selectedCategoria])
 
   const { data: fasesList = [] } = useQuery({
     queryKey: ['estadisticas-fases', selectedCategoria],
@@ -96,38 +76,46 @@ export function EstadisticasPage() {
   })
 
   useEffect(() => {
-    setSelectedFase('')
-  }, [selectedCategoria])
+    if (categorias.length && !selectedCategoria) setSelectedCategoria(categorias[0]!.id)
+  }, [categorias, selectedCategoria])
 
   useEffect(() => {
-    if (statsError) toast.error(statsError instanceof Error ? statsError.message : 'Error al cargar estadísticas')
-  }, [statsError])
+    if (!selectedCategoria || !fasesList.length) {
+      setSelectedFase('')
+      return
+    }
+    const activa = fasesList.find((f) => f.activa) ?? fasesList[0]
+    setSelectedFase(activa?.id ?? '')
+  }, [selectedCategoria, fasesList])
 
-  const tabla = useMemo(
-    () => ordenarTablaPorCriterios(statsData?.tabla ?? [], criterios),
-    [statsData?.tabla, criterios],
-  )
-  const goleadores = statsData?.goleadores ?? []
-  const disciplina = statsData?.disciplina ?? []
+  useEffect(() => {
+    if (statsQ.error) {
+      console.error('Error en estadísticas', { error: statsQ.error })
+      toast.error('No se pudieron actualizar las estadísticas.')
+    }
+  }, [statsQ.error])
 
-  const tablaKeys = useMemo(() => rowKeysForTable(tabla), [tabla])
-  const goleadoresKeys = useMemo(() => rowKeysForTable(goleadores), [goleadores])
-  const disciplinaKeys = useMemo(() => rowKeysForTable(disciplina), [disciplina])
-
-  const moveCriterio = (idx: number, dir: -1 | 1) => {
-    setCriterios((prev) => {
-      const next = [...prev]
-      const target = idx + dir
-      if (target < 0 || target >= next.length) return prev
-      const [item] = next.splice(idx, 1)
-      next.splice(target, 0, item!)
-      return next
+  const refrescarEstadisticas = useCallback(() => {
+    if (!torneoId) return
+    void statsQ.refetch()
+    invalidateEstadisticasQueries(qc, {
+      torneoId,
+      categoriaId: selectedCategoria,
+      faseId: selectedFase,
     })
-  }
+  }, [qc, torneoId, selectedCategoria, selectedFase, statsQ])
+
+  const tabla = statsQ.data?.tabla ?? []
+  const goleadores = statsQ.data?.goleadores ?? []
+  const disciplina = statsQ.data?.disciplina ?? []
+
+  const goleadoresKeys = rowKeysForTable(goleadores)
+  const disciplinaKeys = rowKeysForTable(disciplina)
 
   const categoria = categorias.find((c) => c.id === selectedCategoria)
   const partidosJugados = countsQ.data?.partidosJugados ?? 0
   const sinEstadisticasJugadas = !countsQ.isLoading && partidosJugados === 0
+  const statsLoading = statsQ.isLoading || statsQ.isFetching
 
   const liderRow = tabla[0]
   const topGoleador = goleadores[0]
@@ -189,15 +177,15 @@ export function EstadisticasPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={selectedFase || '__all__'} onValueChange={(v) => setSelectedFase(v === '__all__' ? '' : v)}>
+              <Select value={selectedFase || undefined} onValueChange={setSelectedFase}>
                 <SelectTrigger className="w-full md:w-48">
                   <SelectValue placeholder="Fase" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__all__">Todas las fases</SelectItem>
                   {fasesList.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
                       {f.nombre}
+                      {f.activa ? ' (activa)' : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -205,8 +193,12 @@ export function EstadisticasPage() {
             </div>
           </div>
 
+          {statsLoading && (
+            <p className="text-sm text-muted-foreground">Actualizando estadísticas…</p>
+          )}
+
           <TabsContent value="posiciones" className="space-y-4">
-            {statsLoading ? (
+            {statsQ.isLoading ? (
               <Skeleton className="h-64 w-full" />
             ) : (
               <>
@@ -219,14 +211,9 @@ export function EstadisticasPage() {
                         </div>
                         <div>
                           <p className="mb-1 text-sm text-muted-foreground">Líder {categoria?.nombre}</p>
-                          <h3 className="flex items-center gap-3 text-2xl font-bold">
-                            <div className="h-5 w-5 rounded-full" style={{ backgroundColor: categoria?.color }} />
-                            {pickNombreEquipo(liderRow)}
-                          </h3>
+                          <h3 className="text-2xl font-bold">{pickNombreEquipo(liderRow)}</h3>
                           <p className="mt-2 text-sm text-muted-foreground">
-                            {selectedFase
-                              ? fasesList.find((f) => f.id === selectedFase)?.nombre
-                              : 'Todas las fases'}
+                            {fasesList.find((f) => f.id === selectedFase)?.nombre ?? 'Fase'}
                           </p>
                         </div>
                       </div>
@@ -234,89 +221,24 @@ export function EstadisticasPage() {
                   </Card>
                 )}
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Criterios de clasificación</CardTitle>
-                    <CardDescription>
-                      Orden aplicado en esta pantalla. Falta persistirlo en Supabase para que quede guardado por categoría o fase.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-2 md:grid-cols-2">
-                      {criterios.map((criterio, idx) => {
-                        const label = CRITERIOS_CLASIFICACION.find((c) => c.id === criterio)?.label ?? criterio
-                        return (
-                          <div key={criterio} className="flex items-center justify-between rounded-md border px-3 py-2">
-                            <span className="text-sm font-medium">
-                              {idx + 1}. {label}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                disabled={idx === 0}
-                                onClick={() => moveCriterio(idx, -1)}
-                                aria-label="Subir criterio"
-                              >
-                                <ArrowUp className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                disabled={idx === criterios.length - 1}
-                                onClick={() => moveCriterio(idx, 1)}
-                                aria-label="Bajar criterio"
-                              >
-                                <ArrowDown className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
+                {selectedFase && (
+                  <CriteriosClasificacionPanel faseId={selectedFase} onCriteriosChange={setCriteriosOrden} />
+                )}
 
                 <Card>
                   <CardHeader>
                     <CardTitle>Tabla de Posiciones — {categoria?.nombre}</CardTitle>
                     <CardDescription>
-                      {selectedFase ? 'Tabla por fase seleccionada' : 'Acumulado de la categoría'}
+                      Datos desde la configuración de la fase (partidos, goles, tarjetas y ajustes manuales).
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {tabla.length === 0 ? (
-                      <EmptyState
-                        icon={Trophy}
-                        title="Sin datos de tabla"
-                        description="No hay datos de tabla para esta categoría o fase."
-                      />
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              {tablaKeys.map((k) => (
-                                <TableHead key={k}>{k.replace(/_/g, ' ')}</TableHead>
-                              ))}
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {tabla.map((row, idx) => (
-                              <TableRow key={idx}>
-                                {tablaKeys.map((k) => (
-                                  <TableCell key={k}>{formatVistaCell(row[k])}</TableCell>
-                                ))}
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    )}
+                    <TablaPosicionesTable
+                      rows={tabla}
+                      criterios={criteriosOrden}
+                      faseId={selectedFase}
+                      onRefresh={refrescarEstadisticas}
+                    />
                   </CardContent>
                 </Card>
               </>
@@ -324,7 +246,7 @@ export function EstadisticasPage() {
           </TabsContent>
 
           <TabsContent value="goleadores" className="space-y-4">
-            {statsLoading ? (
+            {statsQ.isLoading ? (
               <Skeleton className="h-64 w-full" />
             ) : (
               <>
@@ -351,11 +273,15 @@ export function EstadisticasPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Tabla de Goleadores</CardTitle>
-                    <CardDescription>Ranking de goleadores</CardDescription>
+                    <CardDescription>Se actualiza al guardar goles en el acta</CardDescription>
                   </CardHeader>
                   <CardContent>
                     {goleadores.length === 0 ? (
-                      <EmptyState icon={Target} title="Sin goleadores" description="No hay goles registrados en esta categoría o fase." />
+                      <EmptyState
+                        icon={Target}
+                        title="Sin goleadores"
+                        description="No hay goles registrados en esta categoría o fase."
+                      />
                     ) : (
                       <div className="overflow-x-auto">
                         <Table>
@@ -391,10 +317,10 @@ export function EstadisticasPage() {
                   <AlertTriangle className="h-5 w-5 text-warning" />
                   Disciplina
                 </CardTitle>
-                <CardDescription>Tarjetas acumuladas</CardDescription>
+                <CardDescription>Tarjetas acumuladas (Fair Play en tabla de posiciones)</CardDescription>
               </CardHeader>
               <CardContent>
-                {statsLoading ? (
+                {statsQ.isLoading ? (
                   <Skeleton className="h-64 w-full" />
                 ) : disciplina.length === 0 ? (
                   <EmptyState
