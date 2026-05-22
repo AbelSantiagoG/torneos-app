@@ -44,7 +44,7 @@ import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/common/PageHeader'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatDateOnly, getDateOnlyTime } from '@/lib/utils'
 import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useCategorias } from '@/features/categorias/useCategorias'
@@ -492,9 +492,23 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const partidosPorFecha = useMemo(() => groupByFecha(programados), [programados])
 
   const fechasOrdenadas = useMemo(
-    () => Object.keys(partidosPorFecha).filter((k) => k !== 'sin-fecha').sort(),
+    () =>
+      Object.keys(partidosPorFecha)
+        .filter((k) => k !== 'sin-fecha')
+        .sort((a, b) => {
+          const ta = getDateOnlyTime(a)
+          const tb = getDateOnlyTime(b)
+          if (Number.isNaN(ta) || Number.isNaN(tb)) return a.localeCompare(b)
+          return ta - tb
+        }),
     [partidosPorFecha],
   )
+
+  const comparePartidosPorHora = (a: PartidoListaUi, b: PartidoListaUi) => {
+    const ha = a.hora || '99:99'
+    const hb = b.hora || '99:99'
+    return ha.localeCompare(hb) || a.equipoLocalNombre.localeCompare(b.equipoLocalNombre)
+  }
 
   const horasParaProgramacion = useMemo(() => {
     const rows = horariosLista.filter((h) => h.activo !== false)
@@ -2608,7 +2622,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           ) : (
             fechasOrdenadas.map((fecha) => {
               const partidosFecha = partidosPorFecha[fecha] ?? []
-              const conflicts = findConflictIdsForFecha([...partidosFecha].sort((a, b) => a.hora.localeCompare(b.hora)))
+              const partidosFechaOrdenados = [...partidosFecha].sort(comparePartidosPorHora)
+              const conflicts = findConflictIdsForFecha(partidosFechaOrdenados)
               const hasConflicts = conflicts.length > 0
 
               return (
@@ -2617,7 +2632,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     <div className="flex items-center justify-between">
                       <div>
                         <CardTitle className="flex items-center gap-2 text-lg">
-                          {fecha === 'sin-fecha' ? 'Sin fecha' : formatDate(fecha)}
+                          {fecha === 'sin-fecha' ? 'Sin fecha' : formatDateOnly(fecha)}
                           {hasConflicts && (
                             <Badge variant="destructive" className="flex items-center gap-1">
                               <AlertTriangle className="h-3 w-3" />
@@ -2644,9 +2659,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {[...partidosFecha]
-                          .sort((a, b) => String(a.hora).localeCompare(String(b.hora)))
-                          .map((partido) => {
+                        {partidosFechaOrdenados.map((partido) => {
                             const played = isJugadoEstado(partido.estado)
                             const isConflict = conflicts.includes(partido.id)
 
