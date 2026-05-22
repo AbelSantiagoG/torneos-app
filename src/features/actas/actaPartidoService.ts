@@ -164,6 +164,59 @@ export async function updateActaCabecera(actaId: string, patch: Partial<ActaPart
   assertNoSupabaseError(r, 'programacion')
 }
 
+export async function guardarActaAdministrativa(input: {
+  actaId?: string | null
+  partidoId: string
+  definicion: DefinicionPartidoDb | string
+  equipo_ganador_id: string | null
+  equipo_no_presentado_id: string | null
+  arbitro_nombre: string | null
+  escuela_arbitral_nombre: string | null
+  observaciones: string | null
+}): Promise<ActaPartidoRow> {
+  const payload = {
+    partido_id: input.partidoId,
+    definicion: input.definicion,
+    equipo_ganador_id: input.equipo_ganador_id,
+    equipo_no_presentado_id: input.equipo_no_presentado_id,
+    arbitro_nombre: input.arbitro_nombre,
+    escuela_arbitral_nombre: input.escuela_arbitral_nombre,
+    observaciones: input.observaciones,
+    cerrada: false,
+    fue_tiempo_extra: false,
+    fue_penales: false,
+    penales_local: null,
+    penales_visitante: null,
+  }
+
+  if (input.actaId) {
+    const r = await supabase
+      .from('actas_partido')
+      .update(payload)
+      .eq('id', input.actaId)
+      .select(ACTA_SELECT)
+      .single()
+    if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
+    return assertNoSupabaseError(r, 'programacion') as ActaPartidoRow
+  }
+
+  const existing = await getActaByPartido(input.partidoId)
+  if (existing) {
+    const r = await supabase
+      .from('actas_partido')
+      .update(payload)
+      .eq('id', existing.id)
+      .select(ACTA_SELECT)
+      .single()
+    if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
+    return assertNoSupabaseError(r, 'programacion') as ActaPartidoRow
+  }
+
+  const r = await supabase.from('actas_partido').insert(payload).select(ACTA_SELECT).single()
+  if (r.error) console.error('Error guardando acta administrativa', { payload, error: r.error })
+  return assertNoSupabaseError(r, 'programacion') as ActaPartidoRow
+}
+
 export async function listGolesPartido(partidoId: string): Promise<GolActaRow[]> {
   const r = await supabase
     .from('goles')

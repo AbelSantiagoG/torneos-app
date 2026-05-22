@@ -27,6 +27,7 @@ import { getEquipoById } from '@/features/equipos/equiposService'
 import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
 import {
   getOrCreateActa,
+  guardarActaAdministrativa,
   guardarActaCompleta,
   listGolesPartido,
   listPartidosParaActa,
@@ -72,7 +73,7 @@ const DEF_LABEL: Record<string, string> = {
   tiempo_reglamentario: 'Tiempo reglamentario',
   tiempo_extra: 'Tiempo extra',
   penales: 'Penales',
-  walkover: 'W / No presentaciÃ³n',
+  walkover: 'W / No presentación',
   suspendido: 'Suspendido',
 }
 
@@ -80,7 +81,7 @@ const DEFINICIONES = [
   { value: 'tiempo_reglamentario', label: 'Tiempo reglamentario' },
   { value: 'tiempo_extra', label: 'Tiempo extra' },
   { value: 'penales', label: 'Penales' },
-  { value: 'walkover', label: 'W / No presentaciÃ³n' },
+  { value: 'walkover', label: 'W / No presentación' },
   { value: 'suspendido', label: 'Suspendido' },
 ] as const
 
@@ -485,6 +486,49 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         toast.error('El equipo ganador no puede ser el mismo que el equipo que no se presentÃ³.')
         return
       }
+      if (![el, ev].includes(noPresentId) || ![el, ev].includes(ganadorId)) {
+        toast.error('El equipo ganador y el equipo que no se presentÃ³ deben pertenecer al partido.')
+        return
+      }
+    }
+
+    if (fuePen && !isWalkover && !isSuspendido) {
+      if (!penL.trim() || !penV.trim() || !ganadorId) {
+        toast.error('Para definir por penales, completa penales local, penales visitante y equipo ganador.')
+        return
+      }
+      if (![el, ev].includes(ganadorId)) {
+        toast.error('El equipo ganador debe pertenecer al partido.')
+        return
+      }
+    }
+
+    if (isWalkover) {
+      const payload = {
+        actaId: actaQ.data.id,
+        partidoId: partido.id,
+        definicion: 'walkover',
+        equipo_ganador_id: ganadorId,
+        equipo_no_presentado_id: noPresentId,
+        arbitro_nombre: arbitroNombre.trim() || null,
+        escuela_arbitral_nombre: escuelaArbitral.trim() || null,
+        observaciones: observaciones.trim() || null,
+      }
+      setSaving(true)
+      try {
+        await guardarActaAdministrativa(payload)
+        toast.success('Acta guardada correctamente.')
+        void actaQ.refetch()
+        void partidosQ.refetch()
+        invalidatePartidos()
+      } catch (e) {
+        console.error('Error guardando acta', { payload, error: e })
+        const msg = translateUserError(e, 'programacion')
+        toast.error(msg && msg !== 'No se pudo completar la operaciÃ³n.' ? msg : 'No se pudo guardar el acta por W.')
+      } finally {
+        setSaving(false)
+      }
+      return
     }
 
     if (!bloqueaEventosDeportivos) {
@@ -867,10 +911,10 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-1">
-                <Label>DefiniciÃ³n</Label>
+                <Label>Definición</Label>
                 <Select value={definicion} onValueChange={cambiarDefinicion}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecciona la definiciÃ³n" />
+                    <SelectValue placeholder="Selecciona la definición" />
                   </SelectTrigger>
                   <SelectContent>
                     {DEFINICIONES.map((item) => (
@@ -884,7 +928,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
               {isWalkover && (
                 <Alert>
                   <AlertDescription>
-                    Ganador por W. Resultado administrativo: 3 - 0. No se registrarÃ¡n goles, tarjetas, sustituciones ni jugadores participantes.
+                    Ganador por W. Resultado administrativo: 3 - 0. No se registrarán goles, tarjetas, sustituciones ni jugadores participantes.
                   </AlertDescription>
                 </Alert>
               )}
