@@ -27,6 +27,7 @@ import { useCategorias } from '@/features/categorias/useCategorias'
 import { getDashboardCounts } from '@/features/dashboard/dashboardService'
 import {
   fetchEstadisticasFiltradas,
+  fetchTablaPosicionesFaseGrupo,
   formatVistaCell,
   rowKeysForTable,
   type CriterioClasificacion,
@@ -38,6 +39,7 @@ import { pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
 import { estadisticasQueryKey, invalidateEstadisticasQueries } from '@/features/estadisticas/estadisticasCache'
 import { CriteriosClasificacionPanel } from '@/features/estadisticas/CriteriosClasificacionPanel'
 import { TablaPosicionesTable } from '@/features/estadisticas/TablaPosicionesTable'
+import { isFasePorGrupos, listGruposFase, type GrupoFaseUi } from '@/features/grupos/gruposFaseService'
 function pickNombreEquipo(row: VistaRow): string {
   return pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club') || pickStr(row, 'nombre') || '—'
 }
@@ -75,6 +77,29 @@ export function EstadisticasPage() {
     queryFn: () => listFasesPorCategoria(selectedCategoria),
   })
 
+  const faseSeleccionada = fasesList.find((f) => f.id === selectedFase)
+  const faseEsPorGrupos = isFasePorGrupos(faseSeleccionada?.tipo)
+
+  const gruposQ = useQuery({
+    queryKey: ['estadisticas-grupos-fase', selectedFase],
+    enabled: Boolean(selectedFase && faseEsPorGrupos),
+    queryFn: () => listGruposFase(selectedFase),
+  })
+
+  const tablasGrupoQ = useQuery({
+    queryKey: ['estadisticas-tablas-grupo', selectedFase, (gruposQ.data ?? []).map((g) => g.id).join('|')],
+    enabled: Boolean(selectedFase && faseEsPorGrupos && (gruposQ.data ?? []).length),
+    queryFn: async () => {
+      const grupos = gruposQ.data ?? []
+      return Promise.all(
+        grupos.map(async (grupo: GrupoFaseUi) => ({
+          grupo,
+          rows: await fetchTablaPosicionesFaseGrupo(selectedFase, grupo.id),
+        })),
+      )
+    },
+  })
+
   useEffect(() => {
     if (categorias.length && !selectedCategoria) setSelectedCategoria(categorias[0]!.id)
   }, [categorias, selectedCategoria])
@@ -103,11 +128,16 @@ export function EstadisticasPage() {
       categoriaId: selectedCategoria,
       faseId: selectedFase,
     })
-  }, [qc, torneoId, selectedCategoria, selectedFase, statsQ])
+    if (selectedFase) {
+      void gruposQ.refetch()
+      void tablasGrupoQ.refetch()
+    }
+  }, [qc, torneoId, selectedCategoria, selectedFase, statsQ, gruposQ, tablasGrupoQ])
 
   const tabla = statsQ.data?.tabla ?? []
   const goleadores = statsQ.data?.goleadores ?? []
   const disciplina = statsQ.data?.disciplina ?? []
+  const tablasPorGrupo = tablasGrupoQ.data ?? []
 
   const goleadoresKeys = rowKeysForTable(goleadores)
   const disciplinaKeys = rowKeysForTable(disciplina)
@@ -222,7 +252,12 @@ export function EstadisticasPage() {
                 )}
 
                 {selectedFase && (
-                  <CriteriosClasificacionPanel faseId={selectedFase} onCriteriosChange={setCriteriosOrden} />
+                  <CriteriosClasificacionPanel
+                    torneoId={torneoId}
+                    categoriaId={selectedCategoria}
+                    faseId={selectedFase}
+                    onCriteriosChange={setCriteriosOrden}
+                  />
                 )}
 
                 <Card>
@@ -233,12 +268,55 @@ export function EstadisticasPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <TablaPosicionesTable
-                      rows={tabla}
-                      criterios={criteriosOrden}
-                      faseId={selectedFase}
-                      onRefresh={refrescarEstadisticas}
-                    />
+                    {faseEsPorGrupos ? (
+                      <Tabs defaultValue="general" className="space-y-4">
+                        <TabsList>
+                          <TabsTrigger value="general">Tabla general</TabsTrigger>
+                          <TabsTrigger value="grupos">Por grupos</TabsTrigger>
+                        </TabsList>
+                        <TabsContent value="general">
+                          <TablaPosicionesTable
+                            rows={tabla}
+                            criterios={criteriosOrden}
+                            faseId={selectedFase}
+                            onRefresh={refrescarEstadisticas}
+                          />
+                        </TabsContent>
+                        <TabsContent value="grupos" className="space-y-4">
+                          {gruposQ.isLoading || tablasGrupoQ.isLoading ? (
+                            <Skeleton className="h-48 w-full" />
+                          ) : tablasPorGrupo.length === 0 ? (
+                            <EmptyState
+                              icon={Trophy}
+                              title="Sin grupos"
+                              description="No hay grupos configurados para esta fase."
+                            />
+                          ) : (
+                            tablasPorGrupo.map(({ grupo, rows }) => (
+                              <div key={grupo.id} className="space-y-3 rounded-md border p-4">
+                                <div>
+                                  <h3 className="text-lg font-semibold">{grupo.nombre || 'Grupo'}</h3>
+                                  <p className="text-sm text-muted-foreground">Tabla de posiciones de este grupo.</p>
+                                </div>
+                                  <TablaPosicionesTable
+                                    rows={rows}
+                                    criterios={criteriosOrden}
+                                    faseId={selectedFase}
+                                    onRefresh={refrescarEstadisticas}
+                                  />
+                              </div>
+                            ))
+                          )}
+                        </TabsContent>
+                      </Tabs>
+                    ) : (
+                      <TablaPosicionesTable
+                        rows={tabla}
+                        criterios={criteriosOrden}
+                        faseId={selectedFase}
+                        onRefresh={refrescarEstadisticas}
+                      />
+                    )}
                   </CardContent>
                 </Card>
               </>

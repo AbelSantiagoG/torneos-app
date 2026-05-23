@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { throwOnError } from '@/features/_shared/supabaseHelpers'
+import { pickStr, throwOnError } from '@/features/_shared/supabaseHelpers'
 import { toUserError } from '@/lib/supabaseErrors'
 import { formatHoraUi, HORA_FRANJAS_PREDETERMINADAS, normalizeHoraDb } from '@/features/horarios/horariosService'
 import { mapVwPartidoRow, type PartidoDashboardUi } from '@/features/partidos/partidosUi'
@@ -25,6 +25,17 @@ type PartidoRowDb = {
   equipo_visitante_id: string
   fase_torneo_id?: string | null
   grupo_id?: string | null
+}
+
+type PartidoResultadoRow = {
+  partido_id?: string | null
+  id?: string | null
+  marcador_local?: number | string | null
+  marcador_visitante?: number | string | null
+  resultado_nota?: string | null
+  definicion?: string | null
+  equipo_ganador_id?: string | null
+  equipo_no_presentado_id?: string | null
 }
 
 const DUPLICATE_MATCH_MSG = 'Este partido ya existe en otra jornada. Solo puede repetirse si el torneo es de ida y vuelta.'
@@ -156,6 +167,48 @@ export async function listPartidosFixtureTorneo(
       programacionId: null,
       faseTorneoId: x.fase_torneo_id ?? null,
       grupoId: x.grupo_id ?? null,
+    }
+  })
+}
+
+async function applyResultadosPartidos<T extends PartidoListaUi>(partidos: T[]): Promise<T[]> {
+  const ids = [...new Set(partidos.map((p) => p.id).filter(Boolean))]
+  if (!ids.length) return partidos
+
+  const res = await supabase
+    .from('vw_partidos_resultado_detalle')
+    .select('partido_id, marcador_local, marcador_visitante, resultado_nota, definicion, equipo_ganador_id, equipo_no_presentado_id')
+    .in('partido_id', ids)
+
+  if (res.error || !res.data?.length) {
+    if (res.error) console.error('Error cargando resultados de partidos', { ids, error: res.error })
+    return partidos
+  }
+
+  const byPartido = new Map<string, PartidoResultadoRow>()
+  for (const row of res.data as PartidoResultadoRow[]) {
+    const partidoId = String(row.partido_id ?? row.id ?? '')
+    if (partidoId) byPartido.set(partidoId, row)
+  }
+
+  return partidos.map((partido) => {
+    const row = byPartido.get(partido.id)
+    if (!row) return partido
+    const rowRecord = row as Record<string, unknown>
+    const marcadorLocalRaw = rowRecord.marcador_local
+    const marcadorVisitanteRaw = rowRecord.marcador_visitante
+    const marcadorLocal =
+      marcadorLocalRaw == null || marcadorLocalRaw === '' ? null : Number(marcadorLocalRaw)
+    const marcadorVisitante =
+      marcadorVisitanteRaw == null || marcadorVisitanteRaw === '' ? null : Number(marcadorVisitanteRaw)
+    return {
+      ...partido,
+      golesLocal: Number.isFinite(marcadorLocal) ? marcadorLocal : partido.golesLocal,
+      golesVisitante: Number.isFinite(marcadorVisitante) ? marcadorVisitante : partido.golesVisitante,
+      definicion: pickStr(rowRecord, 'definicion') || partido.definicion || null,
+      resultadoNota: pickStr(rowRecord, 'resultado_nota') || partido.resultadoNota || null,
+      equipoGanadorId: pickStr(rowRecord, 'equipo_ganador_id') || partido.equipoGanadorId || null,
+      equipoNoPresentadoId: pickStr(rowRecord, 'equipo_no_presentado_id') || partido.equipoNoPresentadoId || null,
     }
   })
 }
@@ -317,7 +370,11 @@ export async function loadPartidosTorneoBundle(torneoId: string): Promise<Partid
       estadoProgramacion: pr.estado,
     }
   })
-  return { fixture, programados }
+  const [fixtureConResultados, programadosConResultados] = await Promise.all([
+    applyResultadosPartidos(fixture),
+    applyResultadosPartidos(programados),
+  ])
+  return { fixture: fixtureConResultados, programados: programadosConResultados }
 }
 
 /** @deprecated Prefer loadPartidosTorneoBundle; devuelve solo fixture sin mezclar programación. */

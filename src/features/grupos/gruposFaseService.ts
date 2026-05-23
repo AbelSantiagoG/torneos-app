@@ -40,6 +40,8 @@ export type FixtureGrupoUi = {
   equipoVisitanteNombre: string
   golesLocal: number | null
   golesVisitante: number | null
+  definicion?: string | null
+  resultadoNota?: string | null
 }
 
 export function isFasePorGrupos(tipo?: string | null): boolean {
@@ -93,8 +95,20 @@ function mapFixtureGrupo(rowRaw: unknown): FixtureGrupoUi {
     cancha: pickStr(row, 'cancha', 'cancha_nombre', 'nombre_cancha'),
     equipoLocalNombre: pickStr(row, 'equipo_local_nombre', 'local_nombre', 'equipo_local') || 'Local',
     equipoVisitanteNombre: pickStr(row, 'equipo_visitante_nombre', 'visitante_nombre', 'equipo_visitante') || 'Visitante',
-    golesLocal: row.goles_local == null ? null : Number(row.goles_local),
-    golesVisitante: row.goles_visitante == null ? null : Number(row.goles_visitante),
+    golesLocal:
+      row.marcador_local != null
+        ? Number(row.marcador_local)
+        : row.goles_local == null
+          ? null
+          : Number(row.goles_local),
+    golesVisitante:
+      row.marcador_visitante != null
+        ? Number(row.marcador_visitante)
+        : row.goles_visitante == null
+          ? null
+          : Number(row.goles_visitante),
+    definicion: pickStr(row, 'definicion') || null,
+    resultadoNota: pickStr(row, 'resultado_nota', 'nota_resultado') || null,
   }
 }
 

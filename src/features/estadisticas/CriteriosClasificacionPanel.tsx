@@ -25,11 +25,13 @@ import {
 import { estadisticasCriteriosQueryKey } from '@/features/estadisticas/estadisticasCache'
 
 type Props = {
+  torneoId: string
+  categoriaId: string
   faseId: string
   onCriteriosChange: (criterios: CriterioClasificacion[]) => void
 }
 
-export function CriteriosClasificacionPanel({ faseId, onCriteriosChange }: Props) {
+export function CriteriosClasificacionPanel({ torneoId, categoriaId, faseId, onCriteriosChange }: Props) {
   const qc = useQueryClient()
   const [local, setLocal] = useState<CriterioClasificacion[]>(CRITERIOS_DEFECTO)
   const [nuevo, setNuevo] = useState<CriterioClasificacion | ''>('')
@@ -57,12 +59,25 @@ export function CriteriosClasificacionPanel({ faseId, onCriteriosChange }: Props
   }, [faseId, onCriteriosChange])
 
   const saveMut = useMutation({
-    mutationFn: (list: CriterioClasificacion[]) => guardarCriteriosClasificacionFase(faseId, list),
-    onSuccess: (rows) => {
+    mutationFn: (list: CriterioClasificacion[]) =>
+      guardarCriteriosClasificacionFase({
+        torneoId,
+        categoriaId,
+        faseTorneoId: faseId,
+        criterios: list,
+      }),
+    onSuccess: async (rows) => {
       const ordered = criteriosOrdenadosDesdeRows(rows)
       setLocal(ordered)
       onCriteriosChange(ordered)
-      void qc.invalidateQueries({ queryKey: estadisticasCriteriosQueryKey(faseId) })
+      qc.setQueryData(estadisticasCriteriosQueryKey(faseId), rows)
+      try {
+        await qc.invalidateQueries({ queryKey: estadisticasCriteriosQueryKey(faseId) })
+      } catch (error) {
+        console.error('Error refrescando criterios de clasificaciÃ³n', { faseId, error })
+        toast.warning('Criterios guardados, pero no se pudo actualizar la vista.')
+        return
+      }
       toast.success('Criterios de clasificación guardados.')
     },
     onError: (e) => {
@@ -74,6 +89,7 @@ export function CriteriosClasificacionPanel({ faseId, onCriteriosChange }: Props
   const persist = (next: CriterioClasificacion[]) => {
     const normalized = normalizarOrdenCriterios(next)
     setLocal(normalized)
+    onCriteriosChange(normalized)
     saveMut.mutate(normalized)
   }
 

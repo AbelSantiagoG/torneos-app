@@ -159,6 +159,30 @@ function TeamAvatar({
   )
 }
 
+function ResultadoPartido({ partido, played }: { partido: PartidoListaUi; played?: boolean }) {
+  const definicion = String(partido.definicion ?? '').toLowerCase()
+  if (definicion === 'suspendido') {
+    return <span className="font-semibold text-warning">Suspendido</span>
+  }
+  const debeMostrarMarcador =
+    played || definicion === 'walkover' || partido.golesLocal != null || partido.golesVisitante != null
+  if (!debeMostrarMarcador) {
+    return <span className="text-muted-foreground">vs</span>
+  }
+  return (
+    <div className="text-center">
+      <span className="font-bold tabular-nums">
+        {partido.golesLocal ?? '—'} - {partido.golesVisitante ?? '—'}
+      </span>
+      {definicion === 'walkover' || partido.resultadoNota ? (
+        <p className="mt-0.5 text-xs font-normal text-muted-foreground">
+          {partido.resultadoNota || 'Ganador por W'}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const qc = useQueryClient()
   const [selectedCategoria, setSelectedCategoria] = useState('')
@@ -369,6 +393,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             equipoVisitanteNombre: partido.equipoVisitanteNombre || meta?.equipoVisitanteNombre || 'Visitante',
             golesLocal: partido.golesLocal ?? meta?.golesLocal ?? null,
             golesVisitante: partido.golesVisitante ?? meta?.golesVisitante ?? null,
+            definicion: partido.definicion ?? meta?.definicion ?? null,
+            resultadoNota: partido.resultadoNota ?? meta?.resultadoNota ?? null,
           }
         })
       : fixtureGrupos
@@ -1907,7 +1933,17 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                     <p className="mb-3 text-xs text-muted-foreground">Orden {partido.orden ?? 0}</p>
                                     <div className="mb-3 flex items-center justify-between gap-3 text-sm font-medium">
                                       <span className="min-w-0 flex-1 truncate">{partido.equipoLocalNombre}</span>
-                                      <span className="shrink-0 text-muted-foreground">vs</span>
+                                      <span className="shrink-0 text-muted-foreground">
+                                        {partidoFixture ? (
+                                          <ResultadoPartido partido={partidoFixture} played={jugado} />
+                                        ) : jugado && partido.golesLocal != null && partido.golesVisitante != null ? (
+                                          <span className="font-bold tabular-nums text-foreground">
+                                            {partido.golesLocal} - {partido.golesVisitante}
+                                          </span>
+                                        ) : (
+                                          'vs'
+                                        )}
+                                      </span>
                                       <span className="min-w-0 flex-1 truncate text-right">{partido.equipoVisitanteNombre}</span>
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2 border-t pt-3">
@@ -2029,7 +2065,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   <span className="truncate text-sm font-medium">{partido.equipoLocalNombre}</span>
                                 </div>
 
-                                <span className="mx-1 shrink-0 text-muted-foreground">vs</span>
+                                <div className="mx-1 shrink-0">
+                                  <ResultadoPartido partido={partido} played={isJugadoEstado(partido.estado)} />
+                                </div>
 
                                 <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
                                   <span className="truncate text-sm font-medium">{partido.equipoVisitanteNombre}</span>
@@ -2615,7 +2653,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       </TableHeader>
                       <TableBody>
                         {partidosFechaOrdenados.map((partido) => {
-                            const played = isJugadoEstado(partido.estado)
+                            const played =
+                              isJugadoEstado(partido.estado) ||
+                              partido.definicion === 'walkover' ||
+                              partido.definicion === 'suspendido'
                             const isConflict = conflicts.includes(partido.id)
 
                             return (
@@ -2646,10 +2687,19 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   </div>
                                 </TableCell>
                                 <TableCell className="text-center">
-                                  {played ? (
+                                  {partido.definicion === 'suspendido' ? (
+                                    <span className="font-semibold text-warning">Suspendido</span>
+                                  ) : played ? (
+                                    <>
                                     <span className="font-bold">
                                       {partido.golesLocal ?? '—'} - {partido.golesVisitante ?? '—'}
                                     </span>
+                                    {partido.definicion === 'walkover' || partido.resultadoNota ? (
+                                      <p className="mt-0.5 text-xs text-muted-foreground">
+                                        {partido.resultadoNota || 'Ganador por W'}
+                                      </p>
+                                    ) : null}
+                                    </>
                                   ) : (
                                     <span className="text-muted-foreground">vs</span>
                                   )}

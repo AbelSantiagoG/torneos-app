@@ -56,8 +56,11 @@ export async function fetchEstadisticasFiltradas(
 
   if (!faseTorneoId) return { tabla, goleadores, disciplina }
 
-  const configTabla = await fetchTablaPosicionesConfig(faseTorneoId)
-  if (configTabla.length) {
+  const rpcTablaNueva = await fetchTablaPosicionesFaseGrupo(faseTorneoId, null)
+  const configTabla = rpcTablaNueva.length ? [] : await fetchTablaPosicionesConfig(faseTorneoId)
+  if (rpcTablaNueva.length) {
+    tabla = rpcTablaNueva
+  } else if (configTabla.length) {
     tabla = configTabla.map((r) => tablaPosicionToVistaRow(r))
   } else {
     const rpcTabla = await fetchTablaPosicionesPorFase(faseTorneoId)
@@ -81,6 +84,31 @@ export async function fetchEstadisticasFiltradas(
   }
 
   return { tabla, goleadores, disciplina }
+}
+
+/** Tabla de posiciones por fase (RPC). */
+export async function fetchTablaPosicionesFaseGrupo(
+  faseTorneoId: string,
+  grupoId: string | null,
+): Promise<VistaRow[]> {
+  const variants = [
+    { p_fase_torneo_id: faseTorneoId, p_grupo_id: grupoId },
+    { fase_torneo_id: faseTorneoId, grupo_id: grupoId },
+  ]
+  for (const args of variants) {
+    const r = await supabase.rpc('obtener_tabla_posiciones_fase_grupo', args)
+    if (!r.error && r.data) {
+      return (Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[]
+    }
+    if (r.error) {
+      console.error('Error en estadÃ­sticas', {
+        rpc: 'obtener_tabla_posiciones_fase_grupo',
+        args,
+        error: r.error,
+      })
+    }
+  }
+  return []
 }
 
 /** Tabla de posiciones por fase (RPC). */
@@ -209,7 +237,13 @@ export function ordenarTablaPorCriterios(rows: VistaRow[], criterios: CriterioCl
   })
 }
 
-const CRITERIOS_DEFECTO_ORDEN: CriterioClasificacion[] = ['puntos', 'diferencia_gol', 'goles_favor', 'fair_play']
+const CRITERIOS_DEFECTO_ORDEN: CriterioClasificacion[] = [
+  'puntos',
+  'diferencia_gol',
+  'goles_favor',
+  'goles_contra',
+  'fair_play',
+]
 
 function tablaPosicionToVistaRow(r: TablaPosicionRow): VistaRow {
   return {

@@ -19,6 +19,10 @@ export type PartidoDashboardUi = {
   equipoVisitanteLogoPublicId?: string | null
   golesLocal: number | null
   golesVisitante: number | null
+  definicion?: string | null
+  resultadoNota?: string | null
+  equipoGanadorId?: string | null
+  equipoNoPresentadoId?: string | null
   equipoLocalId?: string | null
   equipoVisitanteId?: string | null
   programacionId?: string | null
@@ -62,6 +66,10 @@ export function mapVwPartidoRow(row: Record<string, unknown>): PartidoDashboardU
     equipoVisitanteNombre: pickStr(row, 'equipo_visitante', 'visitante_nombre', 'nombre_visitante', 'equipo_visitante_nombre'),
     golesLocal: gl != null && !Number.isNaN(gl) ? gl : null,
     golesVisitante: gv != null && !Number.isNaN(gv) ? gv : null,
+    definicion: pickStr(row, 'definicion') || null,
+    resultadoNota: pickStr(row, 'resultado_nota', 'nota_resultado') || null,
+    equipoGanadorId: pickStr(row, 'equipo_ganador_id') || null,
+    equipoNoPresentadoId: pickStr(row, 'equipo_no_presentado_id') || null,
     equipoLocalId: pickStr(row, 'equipo_local_id', 'local_id') || null,
     equipoVisitanteId: pickStr(row, 'equipo_visitante_id', 'visitante_id') || null,
     grupoId: pickStr(row, 'grupo_id') || null,

@@ -24,6 +24,8 @@ export function invalidateEstadisticasQueries(
   if (faseId) {
     void qc.invalidateQueries({ queryKey: tablaPosicionesQueryKey(faseId) })
     void qc.invalidateQueries({ queryKey: estadisticasCriteriosQueryKey(faseId) })
+    void qc.invalidateQueries({ queryKey: ['estadisticas-grupos-fase', faseId] })
+    void qc.invalidateQueries({ queryKey: ['estadisticas-tablas-grupo', faseId] })
   }
   void qc.invalidateQueries({ queryKey: ['tabla-posiciones-config'] })
   void qc.invalidateQueries({ queryKey: ['criterios-clasificacion'] })
