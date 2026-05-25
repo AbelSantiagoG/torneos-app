@@ -566,6 +566,10 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     }
 
     if (fuePen && !isWalkover && !isSuspendido) {
+      if (marcador.local !== marcador.vis) {
+        toast.error('La definición por penales solo aplica si el partido terminó empatado en goles.')
+        return
+      }
       if (!penL.trim() || !penV.trim() || !ganadorId) {
         toast.error('Para definir por penales, completa penales local, penales visitante y equipo ganador.')
         return
