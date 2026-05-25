@@ -33,10 +33,10 @@ const UI_TO_DB: Record<CriterioClasificacion, string> = {
   diferencia_gol: 'diferencia_gol',
   goles_favor: 'goles_favor',
   goles_contra: 'goles_contra',
-  fair_play: 'fairplay',
+  fair_play: 'fair_play',
   partidos_ganados: 'partidos_ganados',
-  partidos_directos: 'partido_directo',
-  sorteo_manual: 'manual',
+  partidos_directos: 'partidos_directos',
+  sorteo_manual: 'sorteo_manual',
 }
 
 export const CRITERIOS_DISPONIBLES: { id: CriterioClasificacion; label: string }[] = [
@@ -69,6 +69,44 @@ const CRITERIO_DIRECCION: Record<CriterioClasificacion, 'asc' | 'desc'> = {
   sorteo_manual: 'asc',
 }
 
+function criteriosStorageKey(faseTorneoId: string): string {
+  return `criterios-clasificacion-fase:${faseTorneoId}`
+}
+
+function isMissingCriteriaTable(error: unknown): boolean {
+  const e = error as { code?: string; message?: string } | null
+  return e?.code === 'PGRST205' || /criterios_clasificacion_fase/i.test(e?.message ?? '')
+}
+
+function localRows(faseTorneoId: string, criterios: CriterioClasificacion[]): CriterioFaseRow[] {
+  return normalizarOrdenCriterios(criterios).map((criterio, idx) => ({
+    id: `local-${faseTorneoId}-${criterio}`,
+    fase_torneo_id: faseTorneoId,
+    criterio,
+    orden: idx + 1,
+    direccion: CRITERIO_DIRECCION[criterio],
+    activo: true,
+  }))
+}
+
+function readLocalCriterios(faseTorneoId: string): CriterioFaseRow[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(criteriosStorageKey(faseTorneoId)) || 'null') as CriterioClasificacion[] | null
+    return Array.isArray(parsed) ? localRows(faseTorneoId, parsed) : []
+  } catch {
+    return []
+  }
+}
+
+function writeLocalCriterios(faseTorneoId: string, criterios: CriterioClasificacion[]): CriterioFaseRow[] {
+  const normalized = normalizarOrdenCriterios(criterios)
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(criteriosStorageKey(faseTorneoId), JSON.stringify(normalized))
+  }
+  return localRows(faseTorneoId, normalized)
+}
+
 function mapDbCriterio(raw: string): CriterioClasificacion | null {
   const key = raw.trim().toLowerCase()
   return DB_TO_UI[key] ?? null
@@ -96,6 +134,7 @@ export async function listCriteriosClasificacionFase(faseTorneoId: string): Prom
 
   if (r.error) {
     console.error('Error en estadisticas', { tabla: 'criterios_clasificacion_fase', faseTorneoId, error: r.error })
+    if (isMissingCriteriaTable(r.error)) return readLocalCriterios(faseTorneoId)
     throw toUserError(r.error, 'programacion')
   }
 
@@ -120,6 +159,9 @@ export async function guardarCriteriosClasificacionFase(params: {
 
   if (existingRes.error) {
     console.error('Error en estadisticas', { action: 'load criterios', faseTorneoId, error: existingRes.error })
+    if (isMissingCriteriaTable(existingRes.error)) {
+      return writeLocalCriterios(faseTorneoId, criterios)
+    }
     throw toUserError(existingRes.error, 'programacion')
   }
 
@@ -141,6 +183,9 @@ export async function guardarCriteriosClasificacionFase(params: {
     const del = await supabase.from('criterios_clasificacion_fase').delete().in('id', idsToDelete)
     if (del.error) {
       console.error('Error en estadisticas', { action: 'delete criterios removed', faseTorneoId, idsToDelete, error: del.error })
+      if (isMissingCriteriaTable(del.error)) {
+        return writeLocalCriterios(faseTorneoId, criterios)
+      }
       throw toUserError(del.error, 'programacion')
     }
   }
@@ -182,6 +227,9 @@ export async function guardarCriteriosClasificacionFase(params: {
         payload: row,
         error: result.error,
       })
+      if (isMissingCriteriaTable(result.error)) {
+        return writeLocalCriterios(faseTorneoId, criterios)
+      }
       throw toUserError(result.error, 'programacion')
     }
 

@@ -78,6 +78,67 @@ function TeamLogo({ row }: { row: VistaRow }) {
   )
 }
 
+function teamKey(row: VistaRow): string {
+  return (
+    pickStr(row, 'equipo_id', 'id_equipo') ||
+    pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre').trim().toLowerCase()
+  )
+}
+
+function fairplayFromTarjetas(row: VistaRow): { fairplay: number; amarillas: number; rojas: number; dobleAmarilla: number } {
+  const amarillas = pickNum(row, 'amarillas', 'tarjetas_amarillas', 'ta')
+  const rojas = pickNum(row, 'rojas', 'tarjetas_rojas', 'tr')
+  const dobleAmarilla = pickNum(row, 'doble_amarilla', 'dobles_amarillas', 'tarjetas_doble_amarilla')
+  const fairplayDb = pickNum(row, 'fairplay', 'fair_play', 'puntos_fair_play')
+  const fairplayCalculado = amarillas * -5 + rojas * -10 + dobleAmarilla * -10
+  return {
+    fairplay: fairplayDb !== 0 ? fairplayDb : fairplayCalculado,
+    amarillas,
+    rojas,
+    dobleAmarilla,
+  }
+}
+
+function aplicarFairplayPorDisciplina(tabla: VistaRow[], disciplina: VistaRow[]): VistaRow[] {
+  if (!tabla.length) return tabla
+  const acumulado = new Map<string, { fairplay: number; amarillas: number; rojas: number; dobleAmarilla: number }>()
+
+  for (const row of disciplina) {
+    const key = teamKey(row)
+    if (!key) continue
+    const current = acumulado.get(key) ?? { fairplay: 0, amarillas: 0, rojas: 0, dobleAmarilla: 0 }
+    const next = fairplayFromTarjetas(row)
+    acumulado.set(key, {
+      fairplay: current.fairplay + next.fairplay,
+      amarillas: current.amarillas + next.amarillas,
+      rojas: current.rojas + next.rojas,
+      dobleAmarilla: current.dobleAmarilla + next.dobleAmarilla,
+    })
+  }
+
+  return tabla.map((row) => {
+    const key = teamKey(row)
+    const fp = key ? acumulado.get(key) : null
+    if (!fp) {
+      return {
+        ...row,
+        fairplay: pickNum(row, 'fairplay', 'fair_play', 'puntos_fair_play'),
+        fair_play: pickNum(row, 'fair_play', 'fairplay', 'puntos_fair_play'),
+        puntos_fair_play: pickNum(row, 'puntos_fair_play', 'fair_play', 'fairplay'),
+      }
+    }
+    return {
+      ...row,
+      fairplay: fp.fairplay,
+      fair_play: fp.fairplay,
+      puntos_fair_play: fp.fairplay,
+      amarillas: fp.amarillas,
+      rojas: fp.rojas,
+      doble_amarilla: fp.dobleAmarilla,
+    }
+  })
+}
+
 export function EstadisticasPage() {
   const qc = useQueryClient()
   const [selectedCategoria, setSelectedCategoria] = useState('')
@@ -170,34 +231,41 @@ export function EstadisticasPage() {
     }
   }, [qc, torneoId, selectedCategoria, selectedFase, statsQ, gruposQ, tablasGrupoQ])
 
-  const tabla = statsQ.data?.tabla ?? []
   const goleadores = statsQ.data?.goleadores ?? []
   const disciplina = statsQ.data?.disciplina ?? []
+  const tabla = aplicarFairplayPorDisciplina(statsQ.data?.tabla ?? [], disciplina)
   const tablasPorGrupo = tablasGrupoQ.data ?? []
   const equiposPorGrupo = grupoEquiposQ.data ?? []
 
   const rowsGrupoConFallback = (grupoId: string, rows: VistaRow[]): VistaRow[] => {
-    if (rows.length) return rows
+    if (rows.length) return aplicarFairplayPorDisciplina(rows, disciplina)
     return equiposPorGrupo
       .filter((item) => item.grupoId === grupoId)
-      .map((item) => ({
-        equipo_id: item.equipoId,
-        equipo_nombre: item.equipoNombre,
-        logo_url: item.logoUrl,
-        logo_public_id: item.logoPublicId,
-        pj: 0,
-        pg: 0,
-        pe: 0,
-        pp: 0,
-        gf: 0,
-        gc: 0,
-        dg: 0,
-        pts: 0,
-        puntos: 0,
-        fair_play: 0,
-        amarillas: 0,
-        rojas: 0,
-      }))
+      .map((item) => {
+        const fromGeneral = tabla.find((row) => teamKey(row) === item.equipoId || teamKey(row) === item.equipoNombre.trim().toLowerCase())
+        return {
+          ...(fromGeneral ?? {
+            pj: 0,
+            pg: 0,
+            pe: 0,
+            pp: 0,
+            gf: 0,
+            gc: 0,
+            dg: 0,
+            pts: 0,
+            puntos: 0,
+            fairplay: 0,
+            fair_play: 0,
+            puntos_fair_play: 0,
+            amarillas: 0,
+            rojas: 0,
+          }),
+          equipo_id: item.equipoId,
+          equipo_nombre: item.equipoNombre,
+          logo_url: item.logoUrl || pickStr(fromGeneral ?? {}, 'logo_url', 'equipo_logo_url'),
+          logo_public_id: item.logoPublicId || pickStr(fromGeneral ?? {}, 'logo_public_id', 'equipo_logo_public_id'),
+        }
+      })
   }
 
   const goleadoresOrdenados = [...goleadores].sort((a, b) => {
