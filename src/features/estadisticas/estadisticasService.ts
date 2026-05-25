@@ -130,6 +130,15 @@ function emptyCalcRow(row: VistaRow): TablaCalcRow {
   }
 }
 
+function hasResultadoReal(row: VistaRow): boolean {
+  const definicion = pickStr(row, 'definicion').toLowerCase()
+  if (definicion === 'walkover' || definicion === 'suspendido' || definicion === 'penales') return true
+  if (pickStr(row, 'acta_id', 'acta_partido_id')) return true
+  if (pickStr(row, 'equipo_ganador_id')) return true
+  if (pickNullableNum(row, 'goles_local', 'goles_visitante') != null) return true
+  return false
+}
+
 function addResultado(row: TablaCalcRow, gf: number, gc: number, outcome: 'win' | 'draw' | 'loss' | 'none'): void {
   row.pj += 1
   row.gf += gf
@@ -238,6 +247,7 @@ async function recalcularTablaDesdeResultados(
     const partidoId = pickStr(partido, 'id')
     const result = resultados.get(partidoId)
     if (!result) continue
+    if (!hasResultadoReal(result)) continue
 
     const localId = pickStr(partido, 'equipo_local_id')
     const visitanteId = pickStr(partido, 'equipo_visitante_id')
@@ -247,7 +257,6 @@ async function recalcularTablaDesdeResultados(
 
     const definicion = pickStr(result, 'definicion').toLowerCase()
     const ganadorId = pickStr(result, 'equipo_ganador_id')
-    const estado = pickStr(partido, 'estado').toLowerCase()
     let ml = pickNullableNum(result, 'marcador_local', 'goles_local')
     let mv = pickNullableNum(result, 'marcador_visitante', 'goles_visitante')
 
@@ -266,9 +275,7 @@ async function recalcularTablaDesdeResultados(
     }
 
     if (ml == null || mv == null) {
-      if (!estado.includes('jugado')) continue
-      ml = 0
-      mv = 0
+      continue
     }
 
     if (definicion === 'penales' && ganadorId) {

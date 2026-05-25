@@ -197,6 +197,13 @@ async function applyResultadosPartidos<T extends PartidoListaUi>(partidos: T[]):
     const rowRecord = row as Record<string, unknown>
     const marcadorLocalRaw = rowRecord.marcador_local
     const marcadorVisitanteRaw = rowRecord.marcador_visitante
+    const definicion = pickStr(rowRecord, 'definicion')
+    const resultadoNota = pickStr(rowRecord, 'resultado_nota')
+    const tieneResultadoReal =
+      Boolean(definicion || resultadoNota || pickStr(rowRecord, 'acta_id', 'acta_partido_id') || pickStr(rowRecord, 'equipo_ganador_id')) ||
+      rowRecord.goles_local != null ||
+      rowRecord.goles_visitante != null
+    if (!tieneResultadoReal) return partido
     const marcadorLocal =
       marcadorLocalRaw == null || marcadorLocalRaw === '' ? null : Number(marcadorLocalRaw)
     const marcadorVisitante =
@@ -205,8 +212,8 @@ async function applyResultadosPartidos<T extends PartidoListaUi>(partidos: T[]):
       ...partido,
       golesLocal: Number.isFinite(marcadorLocal) ? marcadorLocal : partido.golesLocal,
       golesVisitante: Number.isFinite(marcadorVisitante) ? marcadorVisitante : partido.golesVisitante,
-      definicion: pickStr(rowRecord, 'definicion') || partido.definicion || null,
-      resultadoNota: pickStr(rowRecord, 'resultado_nota') || partido.resultadoNota || null,
+      definicion: definicion || partido.definicion || null,
+      resultadoNota: resultadoNota || partido.resultadoNota || null,
       equipoGanadorId: pickStr(rowRecord, 'equipo_ganador_id') || partido.equipoGanadorId || null,
       equipoNoPresentadoId: pickStr(rowRecord, 'equipo_no_presentado_id') || partido.equipoNoPresentadoId || null,
     }

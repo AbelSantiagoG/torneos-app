@@ -1297,8 +1297,8 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={el!}>Local</SelectItem>
-                        <SelectItem value={ev!}>Visitante</SelectItem>
+                        <SelectItem value={el!}>{localNombre}</SelectItem>
+                        <SelectItem value={ev!}>{visitNombre}</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select
@@ -1387,8 +1387,8 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value={el!}>Local</SelectItem>
-                            <SelectItem value={ev!}>Visitante</SelectItem>
+                            <SelectItem value={el!}>{localNombre}</SelectItem>
+                            <SelectItem value={ev!}>{visitNombre}</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1501,8 +1501,8 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value={el!}>Local</SelectItem>
-                            <SelectItem value={ev!}>Visitante</SelectItem>
+                            <SelectItem value={el!}>{localNombre}</SelectItem>
+                            <SelectItem value={ev!}>{visitNombre}</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>

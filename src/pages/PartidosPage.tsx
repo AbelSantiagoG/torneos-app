@@ -165,7 +165,10 @@ function ResultadoPartido({ partido, played }: { partido: PartidoListaUi; played
     return <span className="font-semibold text-warning">Suspendido</span>
   }
   const debeMostrarMarcador =
-    played || definicion === 'walkover' || partido.golesLocal != null || partido.golesVisitante != null
+    definicion === 'walkover' ||
+    definicion === 'penales' ||
+    Boolean(partido.resultadoNota) ||
+    (played && (partido.golesLocal != null || partido.golesVisitante != null))
   if (!debeMostrarMarcador) {
     return <span className="text-muted-foreground">vs</span>
   }
