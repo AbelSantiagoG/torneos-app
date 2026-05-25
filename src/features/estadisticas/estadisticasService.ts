@@ -37,6 +37,16 @@ function equipoKey(row: VistaRow): string {
   )
 }
 
+function pickNullableNum(row: VistaRow, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const value = row[key]
+    if (value == null || value === '') continue
+    const n = Number(value)
+    if (!Number.isNaN(n)) return n
+  }
+  return null
+}
+
 async function enrichTablaConLogos(rows: VistaRow[], categoriaId?: string): Promise<VistaRow[]> {
   if (!rows.length) return rows
 
@@ -87,6 +97,201 @@ async function enrichTablaConLogos(rows: VistaRow[], categoriaId?: string): Prom
   })
 }
 
+type TablaCalcRow = VistaRow & {
+  equipo_id: string
+  equipo_nombre: string
+  pj: number
+  pg: number
+  pe: number
+  pp: number
+  gf: number
+  gc: number
+  dg: number
+  pts: number
+  puntos: number
+}
+
+function emptyCalcRow(row: VistaRow): TablaCalcRow {
+  return {
+    ...row,
+    equipo_id: pickStr(row, 'equipo_id', 'id_equipo'),
+    equipo_nombre: pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre'),
+    pj: 0,
+    pg: 0,
+    pe: 0,
+    pp: 0,
+    gf: 0,
+    gc: 0,
+    dg: 0,
+    pts: 0,
+    puntos: 0,
+    fair_play: pickNum(row, 'fair_play', 'puntos_fair_play', 'fairplay'),
+    puntos_fair_play: pickNum(row, 'puntos_fair_play', 'fair_play', 'fairplay'),
+  }
+}
+
+function addResultado(row: TablaCalcRow, gf: number, gc: number, outcome: 'win' | 'draw' | 'loss' | 'none'): void {
+  row.pj += 1
+  row.gf += gf
+  row.gc += gc
+  row.dg = row.gf - row.gc
+  if (outcome === 'win') {
+    row.pg += 1
+    row.pts += 3
+  } else if (outcome === 'draw') {
+    row.pe += 1
+    row.pts += 1
+  } else if (outcome === 'loss') {
+    row.pp += 1
+  }
+  row.puntos = row.pts
+}
+
+async function recalcularTablaDesdeResultados(
+  baseRows: VistaRow[],
+  faseTorneoId: string,
+  grupoId: string | null,
+): Promise<VistaRow[]> {
+  if (!faseTorneoId) return baseRows
+
+  let partidosQuery = supabase
+    .from('partidos')
+    .select('id, equipo_local_id, equipo_visitante_id, estado, grupo_id')
+    .eq('fase_torneo_id', faseTorneoId)
+  partidosQuery = grupoId ? partidosQuery.eq('grupo_id', grupoId) : partidosQuery
+  const partidosRes = await partidosQuery
+
+  if (partidosRes.error || !partidosRes.data?.length) {
+    if (partidosRes.error) console.error('Error recalculando tabla: partidos', { faseTorneoId, grupoId, error: partidosRes.error })
+    return baseRows
+  }
+
+  const partidos = (partidosRes.data ?? []) as VistaRow[]
+  const partidoIds = partidos.map((p) => pickStr(p, 'id')).filter(Boolean)
+  if (!partidoIds.length) return baseRows
+
+  const resultadosRes = await supabase
+    .from('vw_partidos_resultado_detalle')
+    .select('*')
+    .in('partido_id', partidoIds)
+
+  if (resultadosRes.error || !resultadosRes.data?.length) {
+    if (resultadosRes.error) {
+      console.error('Error recalculando tabla: resultados', { faseTorneoId, grupoId, error: resultadosRes.error })
+    }
+    return baseRows
+  }
+
+  const resultados = new Map<string, VistaRow>()
+  for (const row of (resultadosRes.data ?? []) as VistaRow[]) {
+    const partidoId = pickStr(row, 'partido_id', 'id')
+    if (partidoId) resultados.set(partidoId, row)
+  }
+
+  const equipoIds = [
+    ...new Set(
+      partidos
+        .flatMap((p) => [pickStr(p, 'equipo_local_id'), pickStr(p, 'equipo_visitante_id')])
+        .filter(Boolean),
+    ),
+  ]
+  const equiposRes = equipoIds.length
+    ? await supabase.from('equipos').select('id, nombre, sigla, logo_url, logo_public_id').in('id', equipoIds)
+    : { data: [], error: null }
+  if (equiposRes.error) console.error('Error recalculando tabla: equipos', { equipoIds, error: equiposRes.error })
+
+  const baseByEquipo = new Map<string, VistaRow>()
+  for (const row of baseRows) {
+    const id = pickStr(row, 'equipo_id', 'id_equipo')
+    if (id) baseByEquipo.set(id, row)
+  }
+  for (const equipo of ((equiposRes.data ?? []) as VistaRow[])) {
+    const id = pickStr(equipo, 'id')
+    if (!id || baseByEquipo.has(id)) continue
+    baseByEquipo.set(id, {
+      equipo_id: id,
+      equipo_nombre: pickStr(equipo, 'nombre'),
+      sigla: pickStr(equipo, 'sigla'),
+      logo_url: pickStr(equipo, 'logo_url'),
+      logo_public_id: pickStr(equipo, 'logo_public_id'),
+    })
+  }
+
+  const calc = new Map<string, TablaCalcRow>()
+  for (const row of baseByEquipo.values()) {
+    const id = pickStr(row, 'equipo_id', 'id_equipo')
+    if (id) calc.set(id, emptyCalcRow(row))
+  }
+
+  const ensure = (equipoId: string): TablaCalcRow | null => {
+    if (!equipoId) return null
+    const existing = calc.get(equipoId)
+    if (existing) return existing
+    const base = baseByEquipo.get(equipoId)
+    if (!base) return null
+    const created = emptyCalcRow(base)
+    calc.set(equipoId, created)
+    return created
+  }
+
+  for (const partido of partidos) {
+    const partidoId = pickStr(partido, 'id')
+    const result = resultados.get(partidoId)
+    if (!result) continue
+
+    const localId = pickStr(partido, 'equipo_local_id')
+    const visitanteId = pickStr(partido, 'equipo_visitante_id')
+    const local = ensure(localId)
+    const visitante = ensure(visitanteId)
+    if (!local || !visitante) continue
+
+    const definicion = pickStr(result, 'definicion').toLowerCase()
+    const ganadorId = pickStr(result, 'equipo_ganador_id')
+    const estado = pickStr(partido, 'estado').toLowerCase()
+    let ml = pickNullableNum(result, 'marcador_local', 'goles_local')
+    let mv = pickNullableNum(result, 'marcador_visitante', 'goles_visitante')
+
+    if (definicion === 'suspendido') {
+      addResultado(local, 0, 0, 'none')
+      addResultado(visitante, 0, 0, 'none')
+      continue
+    }
+
+    if (definicion === 'walkover') {
+      ml = ganadorId === localId ? 3 : 0
+      mv = ganadorId === visitanteId ? 3 : 0
+      addResultado(local, ml, mv, ganadorId === localId ? 'win' : 'loss')
+      addResultado(visitante, mv, ml, ganadorId === visitanteId ? 'win' : 'loss')
+      continue
+    }
+
+    if (ml == null || mv == null) {
+      if (!estado.includes('jugado')) continue
+      ml = 0
+      mv = 0
+    }
+
+    if (definicion === 'penales' && ganadorId) {
+      addResultado(local, ml, mv, ganadorId === localId ? 'win' : 'loss')
+      addResultado(visitante, mv, ml, ganadorId === visitanteId ? 'win' : 'loss')
+      continue
+    }
+
+    if (ml > mv) {
+      addResultado(local, ml, mv, 'win')
+      addResultado(visitante, mv, ml, 'loss')
+    } else if (mv > ml) {
+      addResultado(local, ml, mv, 'loss')
+      addResultado(visitante, mv, ml, 'win')
+    } else {
+      addResultado(local, ml, mv, 'draw')
+      addResultado(visitante, mv, ml, 'draw')
+    }
+  }
+
+  return [...calc.values()]
+}
+
 export async function fetchEstadisticasTorneo(torneoId: string): Promise<{
   tabla: VistaRow[]
   goleadores: VistaRow[]
@@ -126,6 +331,7 @@ export async function fetchEstadisticasFiltradas(
     tabla = filterVistaRowsPorFase(filterVistaRowsPorCategoria(base.tabla, categoriaId), faseTorneoId)
   }
   tabla = await enrichTablaConLogos(tabla, categoriaId)
+  tabla = await recalcularTablaDesdeResultados(tabla, faseTorneoId, null)
 
   const partidoIds = new Set(await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId))
   if (partidoIds.size) {
@@ -151,7 +357,8 @@ export async function fetchTablaPosicionesFaseGrupo(
   for (const args of variants) {
     const r = await supabase.rpc('obtener_tabla_posiciones_fase_grupo', args)
     if (!r.error && r.data) {
-      return enrichTablaConLogos((Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[])
+      const rows = await enrichTablaConLogos((Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[])
+      return recalcularTablaDesdeResultados(rows, faseTorneoId, grupoId)
     }
     if (r.error) {
       console.error('Error en estadÃ­sticas', {
