@@ -142,39 +142,30 @@ export async function guardarCriteriosClasificacionFase(params: {
 
   if (!criterios.length) return []
 
-  const existingByDb = new Map<string, string>()
-  for (const row of existing) {
-    if (row.criterioDb) existingByDb.set(row.criterioDb, row.id)
-    if (row.criterioUi) existingByDb.set(UI_TO_DB[row.criterioUi] ?? row.criterioUi, row.id)
-  }
   const selectCols = 'id, torneo_id, categoria_id, fase_torneo_id, criterio, orden, direccion, activo'
-  const saved: CriterioFaseRow[] = []
-
-  for (let idx = 0; idx < criterios.length; idx += 1) {
-    const criterio = criterios[idx]!
-    const criterioDb = UI_TO_DB[criterio] ?? criterio
-    const payload = {
+  const payload = criterios.map((criterio, idx) => ({
       torneo_id: params.torneoId,
       categoria_id: params.categoriaId,
       fase_torneo_id: faseTorneoId,
-      criterio: criterioDb,
+      criterio: UI_TO_DB[criterio] ?? criterio,
       orden: idx + 1,
       direccion: CRITERIO_DIRECCION[criterio],
       activo: true,
-    }
-    const existingId = existingByDb.get(criterioDb)
-    const result = existingId
-      ? await supabase.from('criterios_clasificacion_fase').update(payload).eq('id', existingId).select(selectCols).single()
-      : await supabase.from('criterios_clasificacion_fase').insert(payload).select(selectCols).single()
+  }))
 
-    if (result.error) {
-      console.error('Error en estadisticas', { payload, error: result.error })
-      throw toUserError(result.error, 'programacion')
-    }
-    if (result.data) saved.push(mapRow(result.data as Record<string, unknown>, faseTorneoId))
+  const upsert = await supabase
+    .from('criterios_clasificacion_fase')
+    .upsert(payload, { onConflict: 'fase_torneo_id,criterio' })
+    .select(selectCols)
+
+  if (upsert.error) {
+    console.error('Error en estadisticas', { payload, error: upsert.error })
+    throw toUserError(upsert.error, 'programacion')
   }
 
-  return saved.sort((a, b) => a.orden - b.orden)
+  return ((upsert.data ?? []) as Record<string, unknown>[])
+    .map((row) => mapRow(row, faseTorneoId))
+    .sort((a, b) => a.orden - b.orden)
 }
 
 export function criteriosOrdenadosDesdeRows(rows: CriterioFaseRow[]): CriterioClasificacion[] {

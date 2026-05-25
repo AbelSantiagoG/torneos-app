@@ -287,6 +287,16 @@ export async function guardarActaAdministrativa(input: {
   await postGuardarActaAdministrativa(input)
 }
 
+export async function eliminarActaPartidoSeguro(partidoId: string): Promise<void> {
+  const r = await supabase.rpc('eliminar_acta_partido_seguro', {
+    p_partido_id: partidoId,
+  })
+  if (r.error) {
+    console.error('Error eliminando acta', { partidoId, error: r.error })
+    assertNoSupabaseError(r, 'programacion')
+  }
+}
+
 export async function listGolesPartido(partidoId: string): Promise<GolActaRow[]> {
   const r = await supabase
     .from('goles')

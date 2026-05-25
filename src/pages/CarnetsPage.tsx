@@ -71,6 +71,13 @@ export function CarnetsPage() {
         useCORS: true,
         allowTaint: true,
         backgroundColor: '#f8fafc',
+        onclone: (doc) => {
+          const root = doc.querySelector('[data-carnets-pdf-root]')
+          if (!root) return
+          for (const el of Array.from(root.querySelectorAll('*'))) {
+            el.removeAttribute('class')
+          }
+        },
       })
       const imgData = canvas.toDataURL('image/png')
       const doc = new jsPDF({ unit: 'pt', format: 'a4' })
@@ -235,7 +242,12 @@ export function CarnetsPage() {
             </CardHeader>
           </Card>
 
-          <div ref={printRef} className="grid gap-6 rounded-xl border bg-slate-50 p-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div
+            ref={printRef}
+            data-carnets-pdf-root
+            className="grid gap-6 rounded-xl border bg-slate-50 p-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            style={{ background: '#f8fafc', borderColor: '#e5e7eb', color: '#111827' }}
+          >
             {jugadores.map((jugador) => {
               const torneoLogoSrc = resolveDisplayImageUrl(
                 torneo.logo_public_id,
@@ -253,9 +265,13 @@ export function CarnetsPage() {
                 displayImagePresets.jugadorFotoCarnet(),
               )
               return (
-              <Card key={jugador.id} className="overflow-hidden border-0 shadow-lg ring-1 ring-slate-200">
-                <div className="h-1.5 bg-gradient-to-r from-slate-700 via-slate-500 to-slate-700" />
-                <CardContent className="space-y-4 p-5">
+              <Card
+                key={jugador.id}
+                className="h-[340px] overflow-hidden border-0 shadow-lg ring-1 ring-slate-200"
+                style={{ height: 340, overflow: 'hidden', background: '#ffffff', color: '#111827', border: '1px solid #e5e7eb', borderRadius: 12 }}
+              >
+                <div className="h-1.5" style={{ background: '#334155' }} />
+                <CardContent className="flex h-[334px] flex-col gap-3 p-5" style={{ display: 'flex', height: 334, flexDirection: 'column', gap: 12, padding: 20, background: '#ffffff', color: '#111827' }}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       {torneoLogoSrc ? (
@@ -266,10 +282,10 @@ export function CarnetsPage() {
                         </div>
                       )}
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <p className="max-w-[115px] truncate text-xs font-semibold uppercase tracking-wide" style={{ color: '#64748b' }}>
                           {torneo?.nombre}
                         </p>
-                        <p className="truncate text-xs text-slate-600">{categoria?.nombre}</p>
+                        <p className="max-w-[115px] truncate text-xs" style={{ color: '#475569' }}>{categoria?.nombre}</p>
                       </div>
                     </div>
                     {equipoLogoSrc ? (
@@ -293,14 +309,22 @@ export function CarnetsPage() {
                   </div>
 
                   <div className="text-center">
-                    <h3 className="text-lg font-bold tracking-tight text-slate-900">{jugador.nombre}</h3>
-                    <p className="text-xs font-medium text-slate-500">{equipo?.nombre}</p>
+                    <h3
+                      className="line-clamp-2 min-h-[44px] text-lg font-bold leading-5 tracking-tight"
+                      title={jugador.nombre}
+                      style={{ color: '#111827' }}
+                    >
+                      {jugador.nombre}
+                    </h3>
+                    <p className="truncate text-xs font-medium" title={equipo?.nombre} style={{ color: '#64748b' }}>
+                      {equipo?.nombre}
+                    </p>
                   </div>
 
-                  <div className="space-y-1.5 rounded-lg bg-slate-100/80 px-3 py-2 text-xs">
+                  <div className="mt-auto space-y-1.5 rounded-lg px-3 py-2 text-xs" style={{ background: '#f1f5f9', color: '#111827' }}>
                     <div className="flex justify-between gap-2">
-                      <span className="text-slate-500">Documento</span>
-                      <span className="font-semibold text-slate-800">{jugador.documento}</span>
+                      <span style={{ color: '#64748b' }}>Documento</span>
+                      <span className="max-w-[110px] truncate font-semibold" title={jugador.documento} style={{ color: '#1f2937' }}>{jugador.documento}</span>
                     </div>
                     <div className="flex justify-between gap-2">
                       <span className="text-slate-500">Año nac.</span>

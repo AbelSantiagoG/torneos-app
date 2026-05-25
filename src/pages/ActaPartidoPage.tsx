@@ -35,6 +35,7 @@ import {
   listPartidoJugadores,
   listCambiosPartido,
   estadoActaUi,
+  eliminarActaPartidoSeguro,
 } from '@/features/actas/actaPartidoService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
 import { partidosTorneoQueryKey } from '@/features/partidos/usePartidosTorneo'
@@ -184,6 +185,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   const [tarjetasForm, setTarjetasForm] = useState<TarjForm[]>([])
   const [cambiosForm, setCambiosForm] = useState<CambioForm[]>([])
   const [saving, setSaving] = useState(false)
+  const [deletingActa, setDeletingActa] = useState(false)
 
   useEffect(() => {
     if (initialCategoriaId) setCategoriaId(initialCategoriaId)
@@ -772,6 +774,33 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     }
   }
 
+  const eliminarActa = async (targetPartidoId = partidoId) => {
+    if (!targetPartidoId) return
+    const ok = confirm(
+      'Esto eliminará el acta, goles, tarjetas, jugadores registrados y sustituciones de este partido. El partido seguirá existiendo en el fixture. ¿Deseas continuar?',
+    )
+    if (!ok) return
+    setDeletingActa(true)
+    try {
+      await eliminarActaPartidoSeguro(targetPartidoId)
+      toast.success('Acta eliminada correctamente.')
+      if (targetPartidoId === partidoId) {
+        limpiarEventosDeportivos()
+        setDefinicion('tiempo_reglamentario')
+        setGanadorId('')
+        setNoPresentId('')
+        setPenL('')
+        setPenV('')
+      }
+      await refrescarTrasGuardarActa()
+    } catch (e) {
+      console.error('Error eliminando acta', { partidoId: targetPartidoId, error: e })
+      toast.error(translateUserError(e, 'programacion') || 'No se pudo eliminar el acta.')
+    } finally {
+      setDeletingActa(false)
+    }
+  }
+
   if (torneoLoading) {
     return (
       <div className="space-y-6">
@@ -794,10 +823,10 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     <div className="space-y-6 print:space-y-3">
       <PageHeader
         className="no-print"
-        title="Actas por categoría"
-        description="Partidos programados o jugados. Completa titulares antes de goles y tarjetas."
+        title={partidoId ? 'Acta de partido' : 'Actas por categoría'}
+        description={partidoId ? 'Editar acta y eventos del partido seleccionado.' : 'Partidos programados o jugados. Completa titulares antes de goles y tarjetas.'}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {onBack && (
               <Button variant="outline" onClick={onBack}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
@@ -808,6 +837,18 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
               <Printer className="mr-2 h-4 w-4" />
               Exportar PDF
             </Button>
+            {actaQ.data && (
+              <Button
+                type="button"
+                variant="outline"
+                className="text-destructive"
+                onClick={() => void eliminarActa()}
+                disabled={deletingActa || saving || !partido}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                {deletingActa ? 'Eliminando...' : 'Eliminar acta'}
+              </Button>
+            )}
             <Button type="button" onClick={() => void guardar()} disabled={saving || !partido || Boolean(actaQ.data?.cerrada)}>
               <Save className="mr-2 h-4 w-4" />
               {saving ? 'Guardando…' : 'Guardar acta'}
@@ -888,9 +929,22 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                       <p className="text-xs text-muted-foreground">
                         {p.fecha ? formatDate(p.fecha) : '—'} · {p.hora || '—'} · {p.cancha || '—'}
                       </p>
-                      <Button size="sm" variant="outline" className="w-full" onClick={() => setPartidoId(p.id)}>
-                        Ver / editar acta
-                      </Button>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Button size="sm" variant="outline" className="w-full" onClick={() => setPartidoId(p.id)}>
+                          Ver / editar acta
+                        </Button>
+                        {st !== 'sin_acta' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full text-destructive"
+                            disabled={deletingActa}
+                            onClick={() => void eliminarActa(p.id)}
+                          >
+                            Eliminar acta
+                          </Button>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 )
@@ -1306,7 +1360,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                     const opcionesJugadores = jugadoresOpcionesPorEquipoId.get(g.equipo_id) ?? []
                     return (
                     <div key={g.tempId} className="grid gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-[140px_minmax(180px,1fr)_140px_90px_auto] lg:items-end">
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Equipo</Label>
                         <Select
                           value={g.equipo_id}
@@ -1325,7 +1379,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Jugador</Label>
                         <Select
                           value={g.jugador_id}
@@ -1340,19 +1394,19 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                             )
                           }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="w-full min-w-0 [&>span]:truncate">
                             <SelectValue placeholder="Seleccionar" />
                           </SelectTrigger>
                           <SelectContent>
                             {opcionesJugadores.map((j) => (
-                              <SelectItem key={`${g.tempId}-${j.id}`} value={j.id}>
-                                {j.label}
+                              <SelectItem key={`${g.tempId}-${j.id}`} value={j.id} title={j.label}>
+                                <span className="block max-w-[260px] truncate">{j.label}</span>
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Tipo</Label>
                         <Select
                           value={g.tipo_gol as string}
@@ -1371,7 +1425,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Minuto</Label>
                         <Input
                           inputMode="numeric"
@@ -1420,7 +1474,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                     const opcionesJugadores = jugadoresOpcionesPorEquipoId.get(t.equipo_id) ?? []
                     return (
                     <div key={t.tempId} className="grid gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-[140px_minmax(180px,1fr)_150px_90px_minmax(160px,1fr)_auto] lg:items-end">
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Equipo</Label>
                         <Select
                           value={t.equipo_id}
@@ -1439,7 +1493,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Jugador</Label>
                         <Select
                           value={t.jugador_id}
@@ -1450,19 +1504,19 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                             )
                           }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="w-full min-w-0 [&>span]:truncate">
                             <SelectValue placeholder="Seleccionar" />
                           </SelectTrigger>
                           <SelectContent>
                             {opcionesJugadores.map((j) => (
-                              <SelectItem key={`${t.tempId}-${j.id}`} value={j.id}>
-                                {j.label}
+                              <SelectItem key={`${t.tempId}-${j.id}`} value={j.id} title={j.label}>
+                                <span className="block max-w-[260px] truncate">{j.label}</span>
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Tipo</Label>
                         <Select
                           value={t.tipo as string}
@@ -1482,7 +1536,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Minuto</Label>
                         <Input
                           inputMode="numeric"
@@ -1494,7 +1548,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           }
                         />
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <Label className="text-xs">Motivo (opcional)</Label>
                         <Input
                           value={t.motivo}

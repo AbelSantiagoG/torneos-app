@@ -37,10 +37,14 @@ export async function fetchEstadisticasTorneo(torneoId: string): Promise<{
 }> {
   const [tabla, goleadores, disciplina] = await Promise.all([
     fetchViewTorneo('vw_tabla_posiciones', torneoId),
-    fetchViewTorneo('vw_goleadores', torneoId),
-    fetchViewTorneo('vw_disciplina', torneoId),
+    fetchViewTorneo('vw_goleadores_ranking_detalle', torneoId),
+    fetchViewTorneo('vw_disciplina_ranking_detalle', torneoId),
   ])
-  return { tabla, goleadores, disciplina }
+  return {
+    tabla,
+    goleadores: goleadores.length ? goleadores : await fetchViewTorneo('vw_goleadores', torneoId),
+    disciplina: disciplina.length ? disciplina : await fetchViewTorneo('vw_disciplina', torneoId),
+  }
 }
 
 /** Estadísticas filtradas por categoría y fase (RPC + acumulado según reinicia_tabla). */
@@ -136,7 +140,7 @@ export function filterRowsPorPartidos(rows: VistaRow[], partidoIds: Set<string>)
   })
 }
 
-const SKIP_KEYS = new Set(['torneo_id', 'created_at', 'updated_at'])
+const SKIP_KEYS = new Set(['torneo_id', 'created_at', 'updated_at', 'estado_disciplina'])
 const TECHNICAL_KEY_RE =
   /(^id$|_id$|id$|_url$|url$|public_id$|_public_id$|^created_|^updated_|^deleted_|^logo_|_color$|^color_)/
 

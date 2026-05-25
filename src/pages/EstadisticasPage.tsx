@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Trophy, Target, AlertTriangle } from 'lucide-react'
+import { Trophy, Target, AlertTriangle, User } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -28,8 +28,6 @@ import { getDashboardCounts } from '@/features/dashboard/dashboardService'
 import {
   fetchEstadisticasFiltradas,
   fetchTablaPosicionesFaseGrupo,
-  formatVistaCell,
-  rowKeysForTable,
   type CriterioClasificacion,
   type VistaRow,
 } from '@/features/estadisticas/estadisticasService'
@@ -40,12 +38,43 @@ import { estadisticasQueryKey, invalidateEstadisticasQueries } from '@/features/
 import { CriteriosClasificacionPanel } from '@/features/estadisticas/CriteriosClasificacionPanel'
 import { TablaPosicionesTable } from '@/features/estadisticas/TablaPosicionesTable'
 import { isFasePorGrupos, listGrupoEquipos, listGruposFase, type GrupoFaseUi } from '@/features/grupos/gruposFaseService'
+import { displayImagePresets, resolveDisplayImageUrl } from '@/features/uploads/uploadService'
 function pickNombreEquipo(row: VistaRow): string {
   return pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club') || pickStr(row, 'nombre') || '—'
 }
 
 function pickNombreJugador(row: VistaRow): string {
   return pickStr(row, 'jugador', 'nombre_jugador', 'nombre_completo', 'nombres', 'nombre') || '—'
+}
+
+function PlayerPhoto({ row }: { row: VistaRow }) {
+  const nombre = pickNombreJugador(row)
+  const src = resolveDisplayImageUrl(
+    pickStr(row, 'foto_public_id', 'jugador_foto_public_id'),
+    pickStr(row, 'foto_url', 'jugador_foto_url'),
+    displayImagePresets.jugadorFoto(),
+  )
+  if (src) return <img src={src} alt="" className="h-9 w-9 rounded-full border object-cover" />
+  return (
+    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-xs font-bold">
+      {nombre.slice(0, 2).toUpperCase() || <User className="h-4 w-4" />}
+    </div>
+  )
+}
+
+function TeamLogo({ row }: { row: VistaRow }) {
+  const nombre = pickNombreEquipo(row)
+  const src = resolveDisplayImageUrl(
+    pickStr(row, 'logo_public_id', 'equipo_logo_public_id'),
+    pickStr(row, 'logo_url', 'equipo_logo_url'),
+    displayImagePresets.equipoLogoThumb(),
+  )
+  if (src) return <img src={src} alt="" className="h-14 w-14 rounded-xl border object-cover" />
+  return (
+    <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/20 text-sm font-bold">
+      {nombre.slice(0, 2).toUpperCase()}
+    </div>
+  )
 }
 
 export function EstadisticasPage() {
@@ -170,8 +199,18 @@ export function EstadisticasPage() {
       }))
   }
 
-  const goleadoresKeys = rowKeysForTable(goleadores)
-  const disciplinaKeys = rowKeysForTable(disciplina)
+  const goleadoresOrdenados = [...goleadores].sort((a, b) => {
+    const ga = pickNum(a, 'goles', 'total_goles', 'cantidad_goles')
+    const gb = pickNum(b, 'goles', 'total_goles', 'cantidad_goles')
+    if (ga !== gb) return gb - ga
+    return pickNombreJugador(a).localeCompare(pickNombreJugador(b))
+  })
+  const disciplinaOrdenada = [...disciplina].sort((a, b) => {
+    const fa = pickNum(a, 'fairplay', 'fair_play', 'puntos_fair_play')
+    const fb = pickNum(b, 'fairplay', 'fair_play', 'puntos_fair_play')
+    if (fa !== fb) return fa - fb
+    return pickNombreJugador(a).localeCompare(pickNombreJugador(b))
+  })
 
   const categoria = categorias.find((c) => c.id === selectedCategoria)
   const partidosJugados = countsQ.data?.partidosJugados ?? 0
@@ -179,7 +218,7 @@ export function EstadisticasPage() {
   const statsLoading = statsQ.isLoading || statsQ.isFetching
 
   const liderRow = tabla[0]
-  const topGoleador = goleadores[0]
+  const topGoleador = goleadoresOrdenados[0]
 
   if (torneoLoading) {
     return (
@@ -267,8 +306,8 @@ export function EstadisticasPage() {
                   <Card className="border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent">
                     <CardContent className="py-6">
                       <div className="flex items-center gap-6">
-                        <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-primary/20">
-                          <Trophy className="h-10 w-10 text-primary" />
+                        <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-primary/10">
+                          <TeamLogo row={liderRow} />
                         </div>
                         <div>
                           <p className="mb-1 text-sm text-muted-foreground">Líder {categoria?.nombre}</p>
@@ -396,17 +435,31 @@ export function EstadisticasPage() {
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              {goleadoresKeys.map((k) => (
-                                <TableHead key={k}>{k.replace(/_/g, ' ')}</TableHead>
-                              ))}
+                              <TableHead className="w-12">Foto</TableHead>
+                              <TableHead>Jugador</TableHead>
+                              <TableHead>Equipo</TableHead>
+                              <TableHead className="text-center">Goles</TableHead>
+                              <TableHead className="text-center">Penal</TableHead>
+                              <TableHead className="text-center">Tiro libre</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {goleadores.map((row, idx) => (
-                              <TableRow key={idx}>
-                                {goleadoresKeys.map((k) => (
-                                  <TableCell key={k}>{formatVistaCell(row[k])}</TableCell>
-                                ))}
+                            {goleadoresOrdenados.map((row, idx) => (
+                              <TableRow key={`${pickNombreJugador(row)}-${idx}`}>
+                                <TableCell>
+                                  <PlayerPhoto row={row} />
+                                </TableCell>
+                                <TableCell className="font-medium">{pickNombreJugador(row)}</TableCell>
+                                <TableCell>{pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo') || 'Equipo'}</TableCell>
+                                <TableCell className="text-center font-semibold tabular-nums">
+                                  {pickNum(row, 'goles', 'total_goles', 'cantidad_goles')}
+                                </TableCell>
+                                <TableCell className="text-center tabular-nums">
+                                  {pickNum(row, 'goles_penal', 'penales', 'goles_de_penal')}
+                                </TableCell>
+                                <TableCell className="text-center tabular-nums">
+                                  {pickNum(row, 'goles_tiro_libre', 'tiros_libres', 'goles_de_tiro_libre')}
+                                </TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -442,21 +495,29 @@ export function EstadisticasPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          {disciplinaKeys.map((k) => (
-                            <TableHead key={k}>{k.replace(/_/g, ' ')}</TableHead>
-                          ))}
+                          <TableHead>Jugador</TableHead>
+                          <TableHead>Equipo</TableHead>
+                          <TableHead className="text-center">Amarillas</TableHead>
+                          <TableHead className="text-center">Rojas</TableHead>
+                          <TableHead className="text-center">Doble amarilla</TableHead>
+                          <TableHead className="text-center">Fair Play</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {disciplina.map((row, idx) => {
+                        {disciplinaOrdenada.map((row, idx) => {
                           const am = pickNum(row, 'amarillas', 'tarjetas_amarillas', 'ta')
                           const ro = pickNum(row, 'rojas', 'tarjetas_rojas', 'tr')
+                          const doble = pickNum(row, 'doble_amarilla', 'dobles_amarillas', 'tarjetas_doble_amarilla')
+                          const fairplay = pickNum(row, 'fairplay', 'fair_play', 'puntos_fair_play')
                           const riesgo = ro > 0 || am >= 3
                           return (
                             <TableRow key={idx} className={riesgo ? 'bg-destructive/5' : ''}>
-                              {disciplinaKeys.map((k) => (
-                                <TableCell key={k}>{formatVistaCell(row[k])}</TableCell>
-                              ))}
+                              <TableCell className="font-medium">{pickNombreJugador(row)}</TableCell>
+                              <TableCell>{pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo') || 'Equipo'}</TableCell>
+                              <TableCell className="text-center tabular-nums">{am}</TableCell>
+                              <TableCell className="text-center tabular-nums">{ro}</TableCell>
+                              <TableCell className="text-center tabular-nums">{doble}</TableCell>
+                              <TableCell className="text-center font-semibold tabular-nums">{fairplay}</TableCell>
                             </TableRow>
                           )
                         })}
