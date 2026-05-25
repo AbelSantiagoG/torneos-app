@@ -129,20 +129,24 @@ export async function guardarCriteriosClasificacionFase(params: {
     criterioUi: mapDbCriterio(pickStr(row, 'criterio')),
   }))
 
+  const duplicateIds = existing
+    .filter((row, idx, arr) => row.id && row.criterioUi && arr.findIndex((other) => other.criterioUi === row.criterioUi) !== idx)
+    .map((row) => row.id)
+
   const removeIds = existing
     .filter((row) => row.id && row.criterioUi && !criterios.includes(row.criterioUi))
     .map((row) => row.id)
-  if (removeIds.length) {
-    const del = await supabase.from('criterios_clasificacion_fase').delete().in('id', removeIds)
+  const idsToDelete = [...new Set([...removeIds, ...duplicateIds])]
+  if (idsToDelete.length) {
+    const del = await supabase.from('criterios_clasificacion_fase').delete().in('id', idsToDelete)
     if (del.error) {
-      console.error('Error en estadisticas', { action: 'delete criterios removed', faseTorneoId, removeIds, error: del.error })
+      console.error('Error en estadisticas', { action: 'delete criterios removed', faseTorneoId, idsToDelete, error: del.error })
       throw toUserError(del.error, 'programacion')
     }
   }
 
   if (!criterios.length) return []
 
-  const selectCols = 'id, torneo_id, categoria_id, fase_torneo_id, criterio, orden, direccion, activo'
   const payload = criterios.map((criterio, idx) => ({
       torneo_id: params.torneoId,
       categoria_id: params.categoriaId,
@@ -153,25 +157,38 @@ export async function guardarCriteriosClasificacionFase(params: {
       activo: true,
   }))
 
-  const upsert = await supabase
-    .from('criterios_clasificacion_fase')
-    .upsert(payload, { onConflict: 'fase_torneo_id,criterio' })
+  const saved: CriterioFaseRow[] = []
+  for (let idx = 0; idx < payload.length; idx += 1) {
+    const row = payload[idx]!
+    const criterioUi = criterios[idx] ?? 'puntos'
+    const current = existing.find((item) => item.id && (item.criterioDb === row.criterio || item.criterioUi === criterioUi))
 
-  if (upsert.error) {
-    console.error('Error en estadisticas', { payload, error: upsert.error })
-    throw toUserError(upsert.error, 'programacion')
+    const result = current
+      ? await supabase
+          .from('criterios_clasificacion_fase')
+          .update(row)
+          .eq('id', current.id)
+          .select('id, torneo_id, categoria_id, fase_torneo_id, criterio, orden, direccion, activo')
+          .single()
+      : await supabase
+          .from('criterios_clasificacion_fase')
+          .insert(row)
+          .select('id, torneo_id, categoria_id, fase_torneo_id, criterio, orden, direccion, activo')
+          .single()
+
+    if (result.error) {
+      console.error('Error en estadisticas', {
+        action: current ? 'update criterio' : 'insert criterio',
+        payload: row,
+        error: result.error,
+      })
+      throw toUserError(result.error, 'programacion')
+    }
+
+    saved.push(mapRow((result.data ?? row) as Record<string, unknown>, faseTorneoId))
   }
 
-  return payload.map((row, idx) => ({
-    id: existing.find((item) => item.criterioDb === row.criterio || item.criterioUi === criterios[idx])?.id ?? '',
-    torneo_id: row.torneo_id,
-    categoria_id: row.categoria_id,
-    fase_torneo_id: faseTorneoId,
-    criterio: criterios[idx] ?? 'puntos',
-    orden: row.orden,
-    direccion: row.direccion,
-    activo: row.activo,
-  }))
+  return saved.sort((a, b) => a.orden - b.orden)
 }
 
 export function criteriosOrdenadosDesdeRows(rows: CriterioFaseRow[]): CriterioClasificacion[] {
