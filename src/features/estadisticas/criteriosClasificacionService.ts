@@ -74,6 +74,19 @@ function mapDbCriterio(raw: string): CriterioClasificacion | null {
   return DB_TO_UI[key] ?? null
 }
 
+function mapRow(raw: Record<string, unknown>, faseTorneoId: string): CriterioFaseRow {
+  return {
+    id: pickStr(raw, 'id'),
+    torneo_id: pickStr(raw, 'torneo_id') || undefined,
+    categoria_id: pickStr(raw, 'categoria_id') || undefined,
+    fase_torneo_id: faseTorneoId,
+    criterio: mapDbCriterio(pickStr(raw, 'criterio', 'tipo_criterio', 'tipo')) ?? 'puntos',
+    orden: pickNum(raw, 'orden', 'orden_criterio'),
+    direccion: pickStr(raw, 'direccion') === 'asc' ? 'asc' : 'desc',
+    activo: raw.activo !== false,
+  }
+}
+
 export async function listCriteriosClasificacionFase(faseTorneoId: string): Promise<CriterioFaseRow[]> {
   const r = await supabase
     .from('criterios_clasificacion_fase')
@@ -82,78 +95,86 @@ export async function listCriteriosClasificacionFase(faseTorneoId: string): Prom
     .order('orden', { ascending: true })
 
   if (r.error) {
-    console.error('Error en estadísticas', { tabla: 'criterios_clasificacion_fase', faseTorneoId, error: r.error })
+    console.error('Error en estadisticas', { tabla: 'criterios_clasificacion_fase', faseTorneoId, error: r.error })
     throw toUserError(r.error, 'programacion')
   }
 
-  const rows: CriterioFaseRow[] = []
-  for (const raw of (r.data ?? []) as Record<string, unknown>[]) {
-    const criterio = mapDbCriterio(pickStr(raw, 'criterio', 'tipo_criterio', 'tipo'))
-    if (!criterio) continue
-    rows.push({
-      id: pickStr(raw, 'id'),
-      torneo_id: pickStr(raw, 'torneo_id') || undefined,
-      categoria_id: pickStr(raw, 'categoria_id') || undefined,
-      fase_torneo_id: faseTorneoId,
-      criterio,
-      orden: pickNum(raw, 'orden', 'orden_criterio') || rows.length + 1,
-      direccion: (pickStr(raw, 'direccion') === 'asc' ? 'asc' : 'desc'),
-      activo: raw.activo !== false,
-    })
-  }
-  return rows
+  return ((r.data ?? []) as Record<string, unknown>[])
+    .map((row) => mapRow(row, faseTorneoId))
+    .filter((row) => Boolean(row.criterio))
+    .sort((a, b) => a.orden - b.orden)
 }
 
-export async function guardarCriteriosClasificacionFase(
-  params: {
-    torneoId: string
-    categoriaId: string
-    faseTorneoId: string
-    criterios: CriterioClasificacion[]
-  },
-): Promise<CriterioFaseRow[]> {
+export async function guardarCriteriosClasificacionFase(params: {
+  torneoId: string
+  categoriaId: string
+  faseTorneoId: string
+  criterios: CriterioClasificacion[]
+}): Promise<CriterioFaseRow[]> {
   const faseTorneoId = params.faseTorneoId
   const criterios = normalizarOrdenCriterios(params.criterios)
-  const del = await supabase.from('criterios_clasificacion_fase').delete().eq('fase_torneo_id', faseTorneoId)
-  if (del.error) {
-    console.error('Error en estadísticas', { action: 'delete criterios', faseTorneoId, error: del.error })
-    throw toUserError(del.error, 'programacion')
+  const existingRes = await supabase
+    .from('criterios_clasificacion_fase')
+    .select('id, criterio')
+    .eq('fase_torneo_id', faseTorneoId)
+
+  if (existingRes.error) {
+    console.error('Error en estadisticas', { action: 'load criterios', faseTorneoId, error: existingRes.error })
+    throw toUserError(existingRes.error, 'programacion')
+  }
+
+  const existing = ((existingRes.data ?? []) as Record<string, unknown>[]).map((row) => ({
+    id: pickStr(row, 'id'),
+    criterioDb: pickStr(row, 'criterio'),
+    criterioUi: mapDbCriterio(pickStr(row, 'criterio')),
+  }))
+
+  const removeIds = existing
+    .filter((row) => row.id && row.criterioUi && !criterios.includes(row.criterioUi))
+    .map((row) => row.id)
+  if (removeIds.length) {
+    const del = await supabase.from('criterios_clasificacion_fase').delete().in('id', removeIds)
+    if (del.error) {
+      console.error('Error en estadisticas', { action: 'delete criterios removed', faseTorneoId, removeIds, error: del.error })
+      throw toUserError(del.error, 'programacion')
+    }
   }
 
   if (!criterios.length) return []
 
-  const payload = criterios.map((c, idx) => ({
-    torneo_id: params.torneoId,
-    categoria_id: params.categoriaId,
-    fase_torneo_id: faseTorneoId,
-    criterio: UI_TO_DB[c] ?? c,
-    orden: idx + 1,
-    direccion: CRITERIO_DIRECCION[c],
-    activo: true,
-  }))
+  const existingByDb = new Map<string, string>()
+  for (const row of existing) {
+    if (row.criterioDb) existingByDb.set(row.criterioDb, row.id)
+    if (row.criterioUi) existingByDb.set(UI_TO_DB[row.criterioUi] ?? row.criterioUi, row.id)
+  }
+  const selectCols = 'id, torneo_id, categoria_id, fase_torneo_id, criterio, orden, direccion, activo'
+  const saved: CriterioFaseRow[] = []
 
-  const ins = await supabase
-    .from('criterios_clasificacion_fase')
-    .insert(payload)
-    .select('id, torneo_id, categoria_id, fase_torneo_id, criterio, orden, direccion, activo')
-  if (ins.error) {
-    console.error('Error en estadísticas', { payload, error: ins.error })
-    throw toUserError(ins.error, 'programacion')
+  for (let idx = 0; idx < criterios.length; idx += 1) {
+    const criterio = criterios[idx]!
+    const criterioDb = UI_TO_DB[criterio] ?? criterio
+    const payload = {
+      torneo_id: params.torneoId,
+      categoria_id: params.categoriaId,
+      fase_torneo_id: faseTorneoId,
+      criterio: criterioDb,
+      orden: idx + 1,
+      direccion: CRITERIO_DIRECCION[criterio],
+      activo: true,
+    }
+    const existingId = existingByDb.get(criterioDb)
+    const result = existingId
+      ? await supabase.from('criterios_clasificacion_fase').update(payload).eq('id', existingId).select(selectCols).single()
+      : await supabase.from('criterios_clasificacion_fase').insert(payload).select(selectCols).single()
+
+    if (result.error) {
+      console.error('Error en estadisticas', { payload, error: result.error })
+      throw toUserError(result.error, 'programacion')
+    }
+    if (result.data) saved.push(mapRow(result.data as Record<string, unknown>, faseTorneoId))
   }
 
-  return (ins.data ?? []).map((raw) => {
-    const row = raw as Record<string, unknown>
-    return {
-      id: pickStr(row, 'id'),
-      torneo_id: pickStr(row, 'torneo_id') || undefined,
-      categoria_id: pickStr(row, 'categoria_id') || undefined,
-      fase_torneo_id: faseTorneoId,
-      criterio: mapDbCriterio(pickStr(row, 'criterio')) ?? 'puntos',
-      orden: pickNum(row, 'orden'),
-      direccion: (pickStr(row, 'direccion') === 'asc' ? 'asc' : 'desc'),
-      activo: row.activo !== false,
-    }
-  })
+  return saved.sort((a, b) => a.orden - b.orden)
 }
 
 export function criteriosOrdenadosDesdeRows(rows: CriterioFaseRow[]): CriterioClasificacion[] {

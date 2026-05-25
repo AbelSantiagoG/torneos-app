@@ -276,10 +276,10 @@ function tablaPosicionToVistaRow(r: TablaPosicionRow): VistaRow {
 
 export function tablaPosicionRowsFromVista(rows: VistaRow[]): TablaPosicionRow[] {
   return rows.map((row) => ({
-    equipo_id: pickStr(row, 'equipo_id'),
+    equipo_id: pickStr(row, 'equipo_id', 'id_equipo'),
     equipo_nombre: pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre'),
-    logo_url: pickStr(row, 'logo_url') || null,
-    logo_public_id: pickStr(row, 'logo_public_id') || null,
+    logo_url: pickStr(row, 'logo_url', 'escudo_url', 'logo', 'escudo') || null,
+    logo_public_id: pickStr(row, 'logo_public_id', 'escudo_public_id') || null,
     posicion: pickNum(row, 'posicion', 'pos'),
     pj: pickNum(row, 'pj'),
     pg: pickNum(row, 'pg'),

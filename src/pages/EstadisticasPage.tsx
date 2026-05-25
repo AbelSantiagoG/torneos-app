@@ -39,7 +39,7 @@ import { pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
 import { estadisticasQueryKey, invalidateEstadisticasQueries } from '@/features/estadisticas/estadisticasCache'
 import { CriteriosClasificacionPanel } from '@/features/estadisticas/CriteriosClasificacionPanel'
 import { TablaPosicionesTable } from '@/features/estadisticas/TablaPosicionesTable'
-import { isFasePorGrupos, listGruposFase, type GrupoFaseUi } from '@/features/grupos/gruposFaseService'
+import { isFasePorGrupos, listGrupoEquipos, listGruposFase, type GrupoFaseUi } from '@/features/grupos/gruposFaseService'
 function pickNombreEquipo(row: VistaRow): string {
   return pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club') || pickStr(row, 'nombre') || '—'
 }
@@ -100,6 +100,12 @@ export function EstadisticasPage() {
     },
   })
 
+  const grupoEquiposQ = useQuery({
+    queryKey: ['estadisticas-grupo-equipos', selectedFase],
+    enabled: Boolean(selectedFase && faseEsPorGrupos),
+    queryFn: () => listGrupoEquipos(selectedFase),
+  })
+
   useEffect(() => {
     if (categorias.length && !selectedCategoria) setSelectedCategoria(categorias[0]!.id)
   }, [categorias, selectedCategoria])
@@ -138,6 +144,31 @@ export function EstadisticasPage() {
   const goleadores = statsQ.data?.goleadores ?? []
   const disciplina = statsQ.data?.disciplina ?? []
   const tablasPorGrupo = tablasGrupoQ.data ?? []
+  const equiposPorGrupo = grupoEquiposQ.data ?? []
+
+  const rowsGrupoConFallback = (grupoId: string, rows: VistaRow[]): VistaRow[] => {
+    if (rows.length) return rows
+    return equiposPorGrupo
+      .filter((item) => item.grupoId === grupoId)
+      .map((item) => ({
+        equipo_id: item.equipoId,
+        equipo_nombre: item.equipoNombre,
+        logo_url: item.logoUrl,
+        logo_public_id: item.logoPublicId,
+        pj: 0,
+        pg: 0,
+        pe: 0,
+        pp: 0,
+        gf: 0,
+        gc: 0,
+        dg: 0,
+        pts: 0,
+        puntos: 0,
+        fair_play: 0,
+        amarillas: 0,
+        rojas: 0,
+      }))
+  }
 
   const goleadoresKeys = rowKeysForTable(goleadores)
   const disciplinaKeys = rowKeysForTable(disciplina)
@@ -283,7 +314,7 @@ export function EstadisticasPage() {
                           />
                         </TabsContent>
                         <TabsContent value="grupos" className="space-y-4">
-                          {gruposQ.isLoading || tablasGrupoQ.isLoading ? (
+                          {gruposQ.isLoading || tablasGrupoQ.isLoading || grupoEquiposQ.isLoading ? (
                             <Skeleton className="h-48 w-full" />
                           ) : tablasPorGrupo.length === 0 ? (
                             <EmptyState
@@ -299,7 +330,7 @@ export function EstadisticasPage() {
                                   <p className="text-sm text-muted-foreground">Tabla de posiciones de este grupo.</p>
                                 </div>
                                   <TablaPosicionesTable
-                                    rows={rows}
+                                    rows={rowsGrupoConFallback(grupo.id, rows)}
                                     criterios={criteriosOrden}
                                     faseId={selectedFase}
                                     onRefresh={refrescarEstadisticas}
