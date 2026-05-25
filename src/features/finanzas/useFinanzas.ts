@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createAbono,
   createEgreso,
+  deleteAbono,
   deleteEgreso,
   fetchCarteraRows,
   fetchResumenFinanciero,
   fetchResumenPorCategoria,
+  listAbonos,
   listEgresos,
+  updateAbono,
   updateEgreso,
   type AbonoInput,
   type EgresoInput,
@@ -23,13 +26,14 @@ export function useFinanzas(torneoId: string | undefined) {
     enabled: Boolean(torneoId),
     queryFn: async () => {
       if (!torneoId) throw new Error('Sin torneo')
-      const [resumen, resumenPorCategoria, cartera, egresos] = await Promise.all([
+      const [resumen, resumenPorCategoria, cartera, egresos, abonos] = await Promise.all([
         fetchResumenFinanciero(torneoId),
         fetchResumenPorCategoria(torneoId),
         fetchCarteraRows(torneoId),
         listEgresos(torneoId),
+        listAbonos(torneoId),
       ])
-      return { resumen, resumenPorCategoria, cartera, egresos }
+      return { resumen, resumenPorCategoria, cartera, egresos, abonos }
     },
   })
 
@@ -59,16 +63,30 @@ export function useFinanzas(torneoId: string | undefined) {
     onSuccess: invalidate,
   })
 
+  const updateAbonoMut = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: AbonoInput }) => updateAbono(id, input),
+    onSuccess: invalidate,
+  })
+
+  const deleteAbonoMut = useMutation({
+    mutationFn: (id: string) => deleteAbono(id),
+    onSuccess: invalidate,
+  })
+
   return {
     ...query,
     createEgreso: createEgresoMut.mutateAsync,
     updateEgreso: updateEgresoMut.mutateAsync,
     deleteEgreso: deleteEgresoMut.mutateAsync,
     createAbono: createAbonoMut.mutateAsync,
+    updateAbono: updateAbonoMut.mutateAsync,
+    deleteAbono: deleteAbonoMut.mutateAsync,
     isMutating:
       createEgresoMut.isPending ||
       updateEgresoMut.isPending ||
       deleteEgresoMut.isPending ||
-      createAbonoMut.isPending,
+      createAbonoMut.isPending ||
+      updateAbonoMut.isPending ||
+      deleteAbonoMut.isPending,
   }
 }

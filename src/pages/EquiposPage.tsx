@@ -1237,6 +1237,7 @@ export function EquiposPage() {
                     <TableHead>Documento</TableHead>
                     <TableHead>Nacimiento</TableHead>
                     <TableHead>Edad</TableHead>
+                    <TableHead className="text-center">PJ</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
@@ -1244,7 +1245,7 @@ export function EquiposPage() {
                 <TableBody>
                   {jugadoresEquipoFiltrados.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
                         Ningún jugador coincide con la búsqueda.
                       </TableCell>
                     </TableRow>
@@ -1258,6 +1259,9 @@ export function EquiposPage() {
                     })
                     return (
                     <TableRow key={jugador.id}>
+                      <TableCell className="text-center text-sm font-medium tabular-nums">
+                        {jugador.partidosJugados ?? 0}
+                      </TableCell>
                       <TableCell>
                         {fotoSrc ? (
                           <img src={fotoSrc} alt="" className="h-8 w-8 rounded-md border object-cover" />

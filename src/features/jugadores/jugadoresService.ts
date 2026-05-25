@@ -87,12 +87,13 @@ export async function getJugadoresByEquipo(equipoId: string, categoriaId: string
     .is('fecha_fin', null)
 
   const rows = assertNoSupabaseError(result, 'jugador') as unknown as JugadorJoinRow[]
-  return rows
+  const jugadores = rows
     .map((r) => {
       const jr = unwrapNestedJugador(r.jugadores as JugadorRow | JugadorRow[] | null)
       return jr ? mapJugadorUi(jr, r.equipo_id, categoriaId) : null
     })
     .filter((j): j is Jugador => j !== null)
+  return attachPartidosJugados(jugadores)
 }
 
 /** Todos los jugadores con membresía activa en equipos de la categoría (una sola consulta). */
@@ -122,7 +123,7 @@ export async function getJugadoresActivosPorCategoria(categoriaId: string): Prom
     .is('fecha_fin', null)
 
   const rows = assertNoSupabaseError(result, 'jugador') as unknown as EquipoJugadorJoin[]
-  return rows
+  const jugadores = rows
     .map((r) => {
       const jr = unwrapNestedJugador(r.jugadores)
       if (!jr) return null
@@ -135,6 +136,33 @@ export async function getJugadoresActivosPorCategoria(categoriaId: string): Prom
       }
     })
     .filter((j): j is Jugador & { equipoNombre: string; equipoColor: string } => j !== null)
+  return attachPartidosJugados(jugadores)
+}
+
+async function attachPartidosJugados<T extends Jugador>(jugadores: T[]): Promise<T[]> {
+  const ids = jugadores.map((j) => j.id).filter(Boolean)
+  if (!ids.length) return jugadores
+
+  const result = await supabase
+    .from('partido_jugadores')
+    .select('jugador_id, partido_id, rol')
+    .in('jugador_id', ids)
+    .in('rol', ['titular', 'ingreso_cambio'])
+
+  if (result.error) {
+    console.error('Error cargando partidos jugados por jugador', { ids, error: result.error })
+    return jugadores.map((j) => ({ ...j, partidosJugados: 0 }))
+  }
+
+  const counts = new Map<string, Set<string>>()
+  for (const row of (result.data ?? []) as { jugador_id?: string | null; partido_id?: string | null }[]) {
+    if (!row.jugador_id || !row.partido_id) continue
+    const set = counts.get(row.jugador_id) ?? new Set<string>()
+    set.add(row.partido_id)
+    counts.set(row.jugador_id, set)
+  }
+
+  return jugadores.map((j) => ({ ...j, partidosJugados: counts.get(j.id)?.size ?? 0 }))
 }
 
 export type JugadorCreateInput = {

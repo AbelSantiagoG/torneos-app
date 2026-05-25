@@ -63,7 +63,7 @@ import { translateUserError } from '@/lib/errorMessages'
 import { useTorneoActivo } from '@/features/torneos/useTorneoActivo'
 import { useFinanzas } from '@/features/finanzas/useFinanzas'
 import { useCategorias } from '@/features/categorias/useCategorias'
-import type { CarteraRowUi, EgresoRow } from '@/features/finanzas/finanzasService'
+import type { AbonoRowUi, CarteraRowUi, EgresoRow } from '@/features/finanzas/finanzasService'
 
 function labelCategoriaGasto(slug: string): string {
   const m: Record<string, string> = {
@@ -93,6 +93,8 @@ export function FinanzasPage() {
   const [isAbonoDialogOpen, setIsAbonoDialogOpen] = useState(false)
   const [editingEgreso, setEditingEgreso] = useState<EgresoRow | null>(null)
   const [deleteEgresoId, setDeleteEgresoId] = useState<string | null>(null)
+  const [editingAbono, setEditingAbono] = useState<AbonoRowUi | null>(null)
+  const [deleteAbonoId, setDeleteAbonoId] = useState<string | null>(null)
 
   const [egresoForm, setEgresoForm] = useState({
     fecha: new Date().toISOString().slice(0, 10),
@@ -122,6 +124,8 @@ export function FinanzasPage() {
     updateEgreso,
     deleteEgreso,
     createAbono,
+    updateAbono,
+    deleteAbono,
     isMutating,
   } = useFinanzas(torneoId)
 
@@ -139,6 +143,7 @@ export function FinanzasPage() {
   const resumenPorCategoria = finData?.resumenPorCategoria ?? []
   const cartera = finData?.cartera ?? []
   const egresos = finData?.egresos ?? []
+  const abonos = finData?.abonos ?? []
 
   const porcentajeCobrado = useMemo(() => {
     if (!resumen || resumen.ingresosEsperados <= 0) return 0
@@ -232,8 +237,13 @@ export function FinanzasPage() {
       )
       return
     }
+    const saldoDisponible = row.saldo + (editingAbono?.equipoId === row.equipoId ? editingAbono.valor : 0)
+    if (valor > saldoDisponible) {
+      toast.error(`El abono no puede superar el saldo pendiente (${formatCurrency(saldoDisponible)}).`)
+      return
+    }
     try {
-      await createAbono({
+      const payload = {
         equipoId: row.equipoId,
         valor,
         concepto: abonoForm.concepto.trim() || 'Abono',
@@ -242,10 +252,53 @@ export function FinanzasPage() {
         medioPago: abonoForm.medioPago,
         referencia: null,
         observaciones: null,
-      })
-      toast.success('Abono registrado')
+      }
+      if (editingAbono) {
+        await updateAbono({ id: editingAbono.id, input: payload })
+        toast.success('Abono actualizado')
+      } else {
+        await createAbono(payload)
+        toast.success('Abono registrado')
+      }
       setIsAbonoDialogOpen(false)
+      setEditingAbono(null)
       setAbonoForm((f) => ({ ...f, valor: '', equipoId: '', medioPago: 'efectivo' }))
+      await refetch()
+    } catch (e) {
+      toast.error(translateUserError(e, 'finanzas'))
+    }
+  }
+
+  const openNewAbono = (row?: CarteraRowUi) => {
+    setEditingAbono(null)
+    setAbonoForm({
+      equipoId: row?.equipoId ?? '',
+      valor: '',
+      concepto: 'Abono inscripción',
+      fecha: new Date().toISOString().slice(0, 10),
+      medioPago: 'efectivo',
+    })
+    setIsAbonoDialogOpen(true)
+  }
+
+  const openEditAbono = (abono: AbonoRowUi) => {
+    setEditingAbono(abono)
+    setAbonoForm({
+      equipoId: abono.equipoId,
+      valor: String(abono.valor),
+      concepto: abono.observaciones ?? 'Abono inscripción',
+      fecha: abono.fecha,
+      medioPago: abono.medioPago,
+    })
+    setIsAbonoDialogOpen(true)
+  }
+
+  const confirmDeleteAbono = async () => {
+    if (!deleteAbonoId) return
+    try {
+      await deleteAbono(deleteAbonoId)
+      toast.success('Abono eliminado')
+      setDeleteAbonoId(null)
       await refetch()
     } catch (e) {
       toast.error(translateUserError(e, 'finanzas'))
@@ -473,14 +526,14 @@ export function FinanzasPage() {
                 </div>
                 <Dialog open={isAbonoDialogOpen} onOpenChange={setIsAbonoDialogOpen}>
                   <DialogTrigger asChild>
-                    <Button disabled={!cartera.length || isMutating}>
+                    <Button disabled={!cartera.length || isMutating} onClick={() => openNewAbono()}>
                       <Plus className="mr-2 h-4 w-4" />
                       Registrar Abono
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Registrar Abono</DialogTitle>
+                      <DialogTitle>{editingAbono ? 'Editar Abono' : 'Registrar Abono'}</DialogTitle>
                       <DialogDescription>Requiere fila en pagos_inscripcion (se crea al registrar el equipo).</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
@@ -547,7 +600,7 @@ export function FinanzasPage() {
                         Cancelar
                       </Button>
                       <Button onClick={() => void submitAbono()} disabled={isMutating}>
-                        Registrar Abono
+                        {editingAbono ? 'Guardar cambios' : 'Registrar Abono'}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
@@ -634,6 +687,7 @@ export function FinanzasPage() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => {
+                                  setEditingAbono(null)
                                   setAbonoForm((f) => ({
                                     ...f,
                                     equipoId: row.equipoId,
@@ -651,6 +705,53 @@ export function FinanzasPage() {
                               <span className="text-xs text-muted-foreground">Sin registro de inscripción</span>
                             )}
                           </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Abonos registrados</CardTitle>
+              <CardDescription>Edita o elimina abonos sin cambiar el registro de inscripción del equipo.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {abonos.length === 0 ? (
+                <EmptyState
+                  icon={CreditCard}
+                  title="Sin abonos"
+                  description="Cuando registres pagos de equipos, aparecerán aquí."
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Fecha</TableHead>
+                      <TableHead>Equipo</TableHead>
+                      <TableHead>Medio</TableHead>
+                      <TableHead>Observaciones</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {abonos.map((abono: AbonoRowUi) => (
+                      <TableRow key={abono.id}>
+                        <TableCell>{formatDate(abono.fecha)}</TableCell>
+                        <TableCell className="font-medium">{abono.equipoNombre}</TableCell>
+                        <TableCell>{abono.medioPago}</TableCell>
+                        <TableCell className="max-w-xs truncate text-muted-foreground">{abono.observaciones ?? '—'}</TableCell>
+                        <TableCell className="text-right font-medium text-success">{formatCurrency(abono.valor)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="sm" onClick={() => openEditAbono(abono)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => setDeleteAbonoId(abono.id)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -812,6 +913,20 @@ export function FinanzasPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={() => void confirmDeleteEgreso()}>Eliminar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={Boolean(deleteAbonoId)} onOpenChange={(o) => !o && setDeleteAbonoId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar abono</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción quitará el abono del historial y actualizará el saldo del equipo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmDeleteAbono()}>Eliminar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

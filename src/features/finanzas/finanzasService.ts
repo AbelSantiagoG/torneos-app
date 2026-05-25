@@ -26,6 +26,18 @@ export type EgresoRow = {
   responsable: string
 }
 
+export type AbonoRowUi = {
+  id: string
+  equipoId: string
+  equipoNombre: string
+  pagoInscripcionId: string | null
+  fecha: string
+  valor: number
+  medioPago: string
+  referencia: string | null
+  observaciones: string | null
+}
+
 export type ResumenCategoriaRow = Record<string, unknown>
 
 function mapResumenFromRow(row: Record<string, unknown>): ResumenFinancieroUi {
@@ -164,6 +176,34 @@ export async function listEgresos(torneoId: string): Promise<EgresoRow[]> {
   return []
 }
 
+export async function listAbonos(torneoId: string): Promise<AbonoRowUi[]> {
+  const equipos = throwOnError(
+    await supabase.from('equipos').select('id, nombre').eq('torneo_id', torneoId),
+  ) as { id: string; nombre: string }[]
+  const equipoIds = equipos.map((e) => e.id)
+  if (!equipoIds.length) return []
+
+  const equipoMap = new Map(equipos.map((e) => [e.id, e.nombre]))
+  const r = await supabase
+    .from('abonos')
+    .select('id, equipo_id, pago_inscripcion_id, valor, fecha_pago, medio_pago, referencia, observaciones')
+    .in('equipo_id', equipoIds)
+    .order('fecha_pago', { ascending: false })
+
+  if (r.error) throw toFriendlyError(r.error, 'finanzas')
+  return ((r.data ?? []) as Record<string, unknown>[]).map((row) => ({
+    id: pickStr(row, 'id'),
+    equipoId: pickStr(row, 'equipo_id'),
+    equipoNombre: equipoMap.get(pickStr(row, 'equipo_id')) ?? 'Equipo',
+    pagoInscripcionId: pickStr(row, 'pago_inscripcion_id') || null,
+    fecha: pickStr(row, 'fecha_pago', 'fecha').slice(0, 10),
+    valor: pickNum(row, 'valor', 'monto'),
+    medioPago: pickStr(row, 'medio_pago') || 'efectivo',
+    referencia: pickStr(row, 'referencia') || null,
+    observaciones: pickStr(row, 'observaciones') || null,
+  }))
+}
+
 function mapEgresoRow(row: Record<string, unknown>): EgresoRow {
   const fecha = pickStr(row, 'fecha', 'fecha_gasto', 'created_at').slice(0, 10)
   const catRaw = row.categoria ?? row.categoria_gasto ?? row.categoriaGasto
@@ -282,4 +322,23 @@ export async function createAbono(_torneoId: string, input: AbonoInput): Promise
     p_observaciones: obs,
   })
   if (error) throw toFriendlyError(error, 'finanzas')
+}
+
+export async function updateAbono(id: string, input: AbonoInput): Promise<void> {
+  const patch = {
+    equipo_id: input.equipoId,
+    pago_inscripcion_id: input.pagoInscripcionId ?? null,
+    valor: input.valor,
+    fecha_pago: input.fecha,
+    medio_pago: (input.medioPago ?? 'efectivo').toLowerCase(),
+    referencia: input.referencia ?? null,
+    observaciones: [input.concepto, input.observaciones].filter(Boolean).join(' â€” ') || null,
+  }
+  const r = await supabase.from('abonos').update(patch).eq('id', id)
+  if (r.error) throw toFriendlyError(r.error, 'finanzas')
+}
+
+export async function deleteAbono(id: string): Promise<void> {
+  const r = await supabase.from('abonos').delete().eq('id', id)
+  if (r.error) throw toFriendlyError(r.error, 'finanzas')
 }

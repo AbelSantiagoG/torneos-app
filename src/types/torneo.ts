@@ -101,6 +101,7 @@ export interface Jugador {
   advertencia?: string
   fotoUrl?: string | null
   fotoPublicId?: string | null
+  partidosJugados?: number
 }
 
 export interface Partido {
