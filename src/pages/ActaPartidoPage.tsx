@@ -26,6 +26,7 @@ import { useCategorias } from '@/features/categorias/useCategorias'
 import { getEquipoById } from '@/features/equipos/equiposService'
 import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
 import {
+  getActaByPartido,
   getOrCreateActa,
   guardarActaAdministrativa,
   guardarActaCompleta,
@@ -140,7 +141,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   const actaQ = useQuery({
     queryKey: ['acta', partidoId],
     enabled: Boolean(partidoId),
-    queryFn: () => getOrCreateActa(partidoId),
+    queryFn: () => getActaByPartido(partidoId),
   })
 
   const golesInitQ = useQuery({
@@ -246,7 +247,18 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   }, [partidosLista, partidoId])
 
   useEffect(() => {
-    if (!actaQ.data) return
+    if (!partidoId) return
+    if (!actaQ.data) {
+      setArbitroNombre('')
+      setEscuelaArbitral('')
+      setObservaciones('')
+      setDefinicion('tiempo_reglamentario')
+      setPenL('')
+      setPenV('')
+      setGanadorId('')
+      setNoPresentId('')
+      return
+    }
     setArbitroNombre(actaQ.data.arbitro_nombre ?? '')
     setEscuelaArbitral(actaQ.data.escuela_arbitral_nombre ?? '')
     setObservaciones(actaQ.data.observaciones ?? '')
@@ -461,6 +473,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     void pjInitQ.refetch()
     void cambiosInitQ.refetch()
     void partidosQ.refetch()
+    void qc.invalidateQueries({ queryKey: ['actas-listado'] })
     invalidatePartidos()
     if (torneoId) {
       invalidateEstadisticasQueries(qc, {
@@ -601,12 +614,6 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
       return
     }
 
-    if (!actaQ.data) {
-      toast.error('No se pudo cargar o crear el acta del partido. Intenta abrir el acta nuevamente.')
-      console.error('Error guardando acta', { reason: 'actaQ sin data', partidoId: partido.id, error: actaQ.error })
-      return
-    }
-
     if (!bloqueaEventosDeportivos) {
       for (const g of golesForm) {
         if (!g.jugador_id) continue
@@ -641,6 +648,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     let payloadForLog: unknown = null
     setSaving(true)
     try {
+      const actaActual = actaQ.data ?? await getOrCreateActa(partido.id)
       const golesPayload = bloqueaEventosDeportivos
         ? []
         : golesForm
@@ -677,7 +685,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         }))
 
       const payload = {
-        actaId: actaQ.data.id,
+        actaId: actaActual.id,
         partidoId: partido.id,
         equipoLocalId: el,
         equipoVisitanteId: ev,
@@ -779,6 +787,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     setDeletingActa(true)
     try {
       await eliminarActaPartidoSeguro(targetPartidoId)
+      qc.setQueryData(['acta', targetPartidoId], null)
       toast.success('Acta eliminada correctamente.')
       if (targetPartidoId === partidoId) {
         limpiarEventosDeportivos()
@@ -934,7 +943,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                       </p>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <Button size="sm" variant="outline" className="w-full" onClick={() => setPartidoId(p.id)}>
-                          Ver / editar acta
+                          {st === 'sin_acta' ? 'Crear acta' : 'Ver / editar acta'}
                         </Button>
                         {st !== 'sin_acta' && (
                           <Button
