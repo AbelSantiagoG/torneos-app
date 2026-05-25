@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 import { toast } from 'sonner'
 import { Printer, Download, Award, User } from 'lucide-react'
@@ -23,7 +22,7 @@ import { getEquiposByCategoria } from '@/features/equipos/equiposService'
 import { getJugadoresByEquipo } from '@/features/jugadores/jugadoresService'
 import {
   displayImagePresets,
-  inlineRemoteImagesForCapture,
+  fetchImageAsDataUrl,
   resolveDisplayImageUrl,
 } from '@/features/uploads/uploadService'
 
@@ -63,38 +62,104 @@ export function CarnetsPage() {
   }
 
   const handlePdf = async () => {
-    if (!equipo || !torneo || jugadores.length === 0 || !printRef.current) return
+    if (!equipo || !torneo || jugadores.length === 0) return
     try {
-      await inlineRemoteImagesForCapture(printRef.current)
-      const canvas = await html2canvas(printRef.current, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#f8fafc',
-        onclone: (doc) => {
-          const root = doc.querySelector('[data-carnets-pdf-root]')
-          if (!root) return
-          for (const el of Array.from(root.querySelectorAll('*'))) {
-            el.removeAttribute('class')
-          }
-        },
-      })
-      const imgData = canvas.toDataURL('image/png')
       const doc = new jsPDF({ unit: 'pt', format: 'a4' })
       const pageW = doc.internal.pageSize.getWidth()
       const pageH = doc.internal.pageSize.getHeight()
-      const margin = 36
-      const maxW = pageW - margin * 2
-      const ratio = canvas.height / canvas.width
-      let drawW = maxW
-      let drawH = drawW * ratio
-      if (drawH > pageH - margin * 2) {
-        drawH = pageH - margin * 2
-        drawW = drawH / ratio
+      const margin = 32
+      const gap = 18
+      const cardW = 250
+      const cardH = 350
+      const cols = 2
+      const rowsPerPage = Math.floor((pageH - margin * 2 + gap) / (cardH + gap))
+      const x0 = (pageW - cols * cardW - (cols - 1) * gap) / 2
+
+      const torneoLogoSrc = resolveDisplayImageUrl(torneo.logo_public_id, torneo.logo_url, displayImagePresets.torneoLogo())
+      const equipoLogoSrc = resolveDisplayImageUrl(equipo.logoPublicId, equipo.logoUrl, displayImagePresets.equipoLogo())
+      const [torneoLogoData, equipoLogoData] = await Promise.all([
+        torneoLogoSrc ? fetchImageAsDataUrl(torneoLogoSrc) : Promise.resolve(null),
+        equipoLogoSrc ? fetchImageAsDataUrl(equipoLogoSrc) : Promise.resolve(null),
+      ])
+
+      const drawDataImage = (dataUrl: string | null, x: number, y: number, w: number, h: number) => {
+        if (!dataUrl) return false
+        const format = dataUrl.includes('image/png') ? 'PNG' : 'JPEG'
+        doc.addImage(dataUrl, format, x, y, w, h)
+        return true
       }
-      const x = (pageW - drawW) / 2
-      const y = margin
-      doc.addImage(imgData, 'PNG', x, y, drawW, drawH)
+
+      const drawInitials = (text: string, x: number, y: number, w: number, h: number, fill = '#0f172a') => {
+        doc.setFillColor(fill)
+        doc.roundedRect(x, y, w, h, 8, 8, 'F')
+        doc.setTextColor('#ffffff')
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(12)
+        doc.text((text || '?').slice(0, 2).toUpperCase(), x + w / 2, y + h / 2 + 4, { align: 'center' })
+      }
+
+      for (let i = 0; i < jugadores.length; i += 1) {
+        const slot = i % (cols * rowsPerPage)
+        if (i > 0 && slot === 0) doc.addPage()
+        const col = slot % cols
+        const row = Math.floor(slot / cols)
+        const x = x0 + col * (cardW + gap)
+        const y = margin + row * (cardH + gap)
+        const jugador = jugadores[i]!
+        const jugadorFotoSrc = resolveDisplayImageUrl(jugador.fotoPublicId, jugador.fotoUrl, displayImagePresets.jugadorFotoCarnet())
+        const jugadorFotoData = jugadorFotoSrc ? await fetchImageAsDataUrl(jugadorFotoSrc) : null
+
+        doc.setFillColor('#ffffff')
+        doc.roundedRect(x, y, cardW, cardH, 12, 12, 'F')
+        doc.setDrawColor('#e5e7eb')
+        doc.roundedRect(x, y, cardW, cardH, 12, 12, 'S')
+        doc.setFillColor('#334155')
+        doc.rect(x, y, cardW, 7, 'F')
+
+        if (!drawDataImage(torneoLogoData, x + 16, y + 20, 38, 38)) drawInitials(torneo.nombre, x + 16, y + 20, 38, 38)
+        if (!drawDataImage(equipoLogoData, x + cardW - 54, y + 22, 34, 34)) {
+          drawInitials(equipo.logoPlaceholder || equipo.nombre, x + cardW - 54, y + 22, 34, 34, equipo.color || '#0f172a')
+        }
+
+        doc.setTextColor('#64748b')
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.text(String(torneo.nombre).slice(0, 24).toUpperCase(), x + 62, y + 34, { maxWidth: 120 })
+        doc.setFont('helvetica', 'normal')
+        doc.text(String(categoria?.nombre ?? '').slice(0, 28), x + 62, y + 48, { maxWidth: 120 })
+
+        const photoX = x + (cardW - 96) / 2
+        const photoY = y + 76
+        doc.setDrawColor('#e2e8f0')
+        doc.roundedRect(photoX, photoY, 96, 112, 10, 10, 'S')
+        if (!drawDataImage(jugadorFotoData, photoX + 2, photoY + 2, 92, 108)) {
+          drawInitials(jugador.nombre, photoX + 2, photoY + 2, 92, 108, '#e2e8f0')
+          doc.setTextColor('#334155')
+        }
+
+        doc.setTextColor('#111827')
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(jugador.nombre.length > 28 ? 13 : 15)
+        const nameLines = doc.splitTextToSize(jugador.nombre, cardW - 36).slice(0, 2)
+        doc.text(nameLines, x + cardW / 2, y + 216, { align: 'center' })
+        doc.setTextColor('#64748b')
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(10)
+        doc.text(String(equipo.nombre).slice(0, 34), x + cardW / 2, y + 250, { align: 'center', maxWidth: cardW - 36 })
+
+        doc.setFillColor('#f1f5f9')
+        doc.roundedRect(x + 18, y + 278, cardW - 36, 42, 8, 8, 'F')
+        doc.setTextColor('#64748b')
+        doc.setFontSize(9)
+        doc.text('Documento', x + 30, y + 295)
+        doc.text('Año nac.', x + 30, y + 312)
+        doc.setTextColor('#1f2937')
+        doc.setFont('helvetica', 'bold')
+        doc.text(String(jugador.documento).slice(0, 20), x + cardW - 30, y + 295, { align: 'right' })
+        doc.text(String(jugador.anioNacimiento), x + cardW - 30, y + 312, { align: 'right' })
+        doc.setFillColor(equipo.color || '#334155')
+        doc.rect(x, y + cardH - 5, cardW, 5, 'F')
+      }
       doc.save(`carnets-${equipo.nombre.replace(/\s+/g, '-')}.pdf`)
       toast.success('PDF descargado')
     } catch (e) {

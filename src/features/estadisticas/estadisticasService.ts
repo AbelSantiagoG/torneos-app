@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
 import { partidoIdsParaEstadisticasFase } from '@/features/fases/fasesTorneoService'
-import { fetchTablaPosicionesConfig, type TablaPosicionRow } from '@/features/estadisticas/tablaPosicionesService'
+import type { TablaPosicionRow } from '@/features/estadisticas/tablaPosicionesService'
 
 export type VistaRow = Record<string, unknown>
 
@@ -35,13 +35,12 @@ export async function fetchEstadisticasTorneo(torneoId: string): Promise<{
   goleadores: VistaRow[]
   disciplina: VistaRow[]
 }> {
-  const [tabla, goleadores, disciplina] = await Promise.all([
-    fetchViewTorneo('vw_tabla_posiciones', torneoId),
+  const [goleadores, disciplina] = await Promise.all([
     fetchViewTorneo('vw_goleadores_ranking_detalle', torneoId),
     fetchViewTorneo('vw_disciplina_ranking_detalle', torneoId),
   ])
   return {
-    tabla,
+    tabla: [],
     goleadores: goleadores.length ? goleadores : await fetchViewTorneo('vw_goleadores', torneoId),
     disciplina: disciplina.length ? disciplina : await fetchViewTorneo('vw_disciplina', torneoId),
   }
@@ -54,34 +53,18 @@ export async function fetchEstadisticasFiltradas(
   faseTorneoId: string,
 ): Promise<{ tabla: VistaRow[]; goleadores: VistaRow[]; disciplina: VistaRow[] }> {
   const base = await fetchEstadisticasTorneo(torneoId)
-  let tabla = filterVistaRowsPorCategoria(base.tabla, categoriaId)
+  let tabla: VistaRow[] = []
   let goleadores = filterVistaRowsPorCategoria(base.goleadores, categoriaId)
   let disciplina = filterVistaRowsPorCategoria(base.disciplina, categoriaId)
 
   if (!faseTorneoId) return { tabla, goleadores, disciplina }
 
-  const rpcTablaNueva = await fetchTablaPosicionesFaseGrupo(faseTorneoId, null)
-  const configTabla = rpcTablaNueva.length ? [] : await fetchTablaPosicionesConfig(faseTorneoId)
-  if (rpcTablaNueva.length) {
-    tabla = rpcTablaNueva
-  } else if (configTabla.length) {
-    tabla = configTabla.map((r) => tablaPosicionToVistaRow(r))
-  } else {
-    const rpcTabla = await fetchTablaPosicionesPorFase(faseTorneoId)
-    if (rpcTabla.length) {
-      tabla = rpcTabla
-    } else {
-      tabla = filterVistaRowsPorFase(tabla, faseTorneoId)
-    }
-  }
+  tabla = await fetchTablaPosicionesFaseGrupo(faseTorneoId, null)
 
   const partidoIds = new Set(await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId))
   if (partidoIds.size) {
     goleadores = filterRowsPorPartidos(goleadores, partidoIds)
     disciplina = filterRowsPorPartidos(disciplina, partidoIds)
-    if (!configTabla.length) {
-      tabla = filterRowsPorPartidos(tabla, partidoIds)
-    }
   } else {
     goleadores = filterVistaRowsPorFase(goleadores, faseTorneoId)
     disciplina = filterVistaRowsPorFase(disciplina, faseTorneoId)
@@ -96,8 +79,8 @@ export async function fetchTablaPosicionesFaseGrupo(
   grupoId: string | null,
 ): Promise<VistaRow[]> {
   const variants = [
-    { p_fase_torneo_id: faseTorneoId, p_grupo_id: grupoId },
     { fase_torneo_id: faseTorneoId, grupo_id: grupoId },
+    { p_fase_torneo_id: faseTorneoId, p_grupo_id: grupoId },
   ]
   for (const args of variants) {
     const r = await supabase.rpc('obtener_tabla_posiciones_fase_grupo', args)

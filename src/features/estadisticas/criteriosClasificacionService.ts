@@ -156,16 +156,22 @@ export async function guardarCriteriosClasificacionFase(params: {
   const upsert = await supabase
     .from('criterios_clasificacion_fase')
     .upsert(payload, { onConflict: 'fase_torneo_id,criterio' })
-    .select(selectCols)
 
   if (upsert.error) {
     console.error('Error en estadisticas', { payload, error: upsert.error })
     throw toUserError(upsert.error, 'programacion')
   }
 
-  return ((upsert.data ?? []) as Record<string, unknown>[])
-    .map((row) => mapRow(row, faseTorneoId))
-    .sort((a, b) => a.orden - b.orden)
+  return payload.map((row, idx) => ({
+    id: existing.find((item) => item.criterioDb === row.criterio || item.criterioUi === criterios[idx])?.id ?? '',
+    torneo_id: row.torneo_id,
+    categoria_id: row.categoria_id,
+    fase_torneo_id: faseTorneoId,
+    criterio: criterios[idx] ?? 'puntos',
+    orden: row.orden,
+    direccion: row.direccion,
+    activo: row.activo,
+  }))
 }
 
 export function criteriosOrdenadosDesdeRows(rows: CriterioFaseRow[]): CriterioClasificacion[] {

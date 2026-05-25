@@ -28,6 +28,7 @@ import { getDashboardCounts } from '@/features/dashboard/dashboardService'
 import {
   fetchEstadisticasFiltradas,
   fetchTablaPosicionesFaseGrupo,
+  ordenarTablaPorCriterios,
   type CriterioClasificacion,
   type VistaRow,
 } from '@/features/estadisticas/estadisticasService'
@@ -217,7 +218,8 @@ export function EstadisticasPage() {
   const sinEstadisticasJugadas = !countsQ.isLoading && partidosJugados === 0
   const statsLoading = statsQ.isLoading || statsQ.isFetching
 
-  const liderRow = tabla[0]
+  const tablaOrdenada = ordenarTablaPorCriterios(tabla, criteriosOrden)
+  const liderRow = tablaOrdenada[0]
   const topGoleador = goleadoresOrdenados[0]
 
   if (torneoLoading) {

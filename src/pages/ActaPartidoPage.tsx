@@ -240,12 +240,8 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
   }, [ganadorId, isWalkover, noPresentId])
 
   useEffect(() => {
-    if (partidosLista.length && !partidoId) {
-      setPartidoId(partidosLista[0]!.id)
-      return
-    }
     if (partidoId && partidosLista.length && !partidosLista.some((p) => p.id === partidoId)) {
-      setPartidoId(partidosLista[0]?.id ?? '')
+      setPartidoId('')
     }
   }, [partidosLista, partidoId])
 
@@ -833,6 +829,12 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                 Volver
               </Button>
             )}
+            {partidoId && !onBack && (
+              <Button variant="outline" onClick={() => setPartidoId('')}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Cambiar partido
+              </Button>
+            )}
             <Button type="button" variant="outline" onClick={() => void exportarPdf()} disabled={!partido}>
               <Printer className="mr-2 h-4 w-4" />
               Exportar PDF
@@ -857,6 +859,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         }
       />
 
+      {!partidoId && (
       <Card className="no-print">
         <CardContent className="space-y-4 pt-6">
           <div className="grid gap-4 md:grid-cols-2">
@@ -953,6 +956,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
           )}
         </CardContent>
       </Card>
+      )}
 
       {partido && (
         <>
@@ -1359,8 +1363,8 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                   golesForm.map((g) => {
                     const opcionesJugadores = jugadoresOpcionesPorEquipoId.get(g.equipo_id) ?? []
                     return (
-                    <div key={g.tempId} className="grid gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-[140px_minmax(180px,1fr)_140px_90px_auto] lg:items-end">
-                      <div className="min-w-0 space-y-1">
+                    <div key={g.tempId} className="grid min-w-0 grid-cols-1 gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
                         <Label className="text-xs">Equipo</Label>
                         <Select
                           value={g.equipo_id}
@@ -1379,7 +1383,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-1 lg:col-span-5">
                         <Label className="text-xs">Jugador</Label>
                         <Select
                           value={g.jugador_id}
@@ -1406,7 +1410,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-1 lg:col-span-4">
                         <Label className="text-xs">Tipo</Label>
                         <Select
                           value={g.tipo_gol as string}
@@ -1425,7 +1429,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
                         <Label className="text-xs">Minuto</Label>
                         <Input
                           inputMode="numeric"
@@ -1441,13 +1445,13 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="text-destructive"
+                        className="justify-self-end text-destructive lg:col-span-2"
                         onClick={() => setGolesForm((prev) => prev.filter((row) => row.tempId !== g.tempId))}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                       {g.tipo_gol === 'autogol' && (
-                        <p className="text-xs text-amber-700 sm:col-span-2 lg:col-span-5">
+                        <p className="text-xs text-amber-700 sm:col-span-2 lg:col-span-12">
                           Autogol: elige el jugador del equipo que cometió el autogol; el gol sumará al rival en el marcador.
                         </p>
                       )}
@@ -1473,8 +1477,8 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                   tarjetasForm.map((t) => {
                     const opcionesJugadores = jugadoresOpcionesPorEquipoId.get(t.equipo_id) ?? []
                     return (
-                    <div key={t.tempId} className="grid gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-[140px_minmax(180px,1fr)_150px_90px_minmax(160px,1fr)_auto] lg:items-end">
-                      <div className="min-w-0 space-y-1">
+                    <div key={t.tempId} className="grid min-w-0 grid-cols-1 gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
                         <Label className="text-xs">Equipo</Label>
                         <Select
                           value={t.equipo_id}
@@ -1493,7 +1497,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-1 lg:col-span-5">
                         <Label className="text-xs">Jugador</Label>
                         <Select
                           value={t.jugador_id}
@@ -1516,7 +1520,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-1 lg:col-span-4">
                         <Label className="text-xs">Tipo</Label>
                         <Select
                           value={t.tipo as string}
@@ -1536,7 +1540,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
                         <Label className="text-xs">Minuto</Label>
                         <Input
                           inputMode="numeric"
@@ -1548,7 +1552,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                           }
                         />
                       </div>
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-1 lg:col-span-7">
                         <Label className="text-xs">Motivo (opcional)</Label>
                         <Input
                           value={t.motivo}
@@ -1563,7 +1567,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="text-destructive"
+                        className="justify-self-end text-destructive lg:col-span-2"
                         onClick={() => setTarjetasForm((prev) => prev.filter((row) => row.tempId !== t.tempId))}
                       >
                         <Trash2 className="h-4 w-4" />
