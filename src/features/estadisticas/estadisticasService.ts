@@ -30,6 +30,63 @@ export function filterVistaRowsPorFase(rows: VistaRow[], faseTorneoId: string): 
   })
 }
 
+function equipoKey(row: VistaRow): string {
+  return (
+    pickStr(row, 'equipo_id', 'id_equipo') ||
+    pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre').trim().toLowerCase()
+  )
+}
+
+async function enrichTablaConLogos(rows: VistaRow[], categoriaId?: string): Promise<VistaRow[]> {
+  if (!rows.length) return rows
+
+  const ids = [...new Set(rows.map((row) => pickStr(row, 'equipo_id', 'id_equipo')).filter(Boolean))]
+  let equipos: VistaRow[] = []
+
+  if (ids.length) {
+    const byIds = await supabase
+      .from('equipos')
+      .select('id, nombre, sigla, logo_url, logo_public_id')
+      .in('id', ids)
+    if (!byIds.error) equipos = (byIds.data ?? []) as VistaRow[]
+    else console.error('Error cargando logos de equipos', { ids, error: byIds.error })
+  }
+
+  if (!equipos.length && categoriaId) {
+    const byCategoria = await supabase
+      .from('equipos')
+      .select('id, nombre, sigla, logo_url, logo_public_id')
+      .eq('categoria_id', categoriaId)
+    if (!byCategoria.error) equipos = (byCategoria.data ?? []) as VistaRow[]
+    else console.error('Error cargando logos de equipos por categoría', { categoriaId, error: byCategoria.error })
+  }
+
+  if (!equipos.length) return rows
+
+  const equiposMap = new Map<string, VistaRow>()
+  for (const equipo of equipos) {
+    const id = pickStr(equipo, 'id')
+    const nombre = pickStr(equipo, 'nombre').trim().toLowerCase()
+    if (id) equiposMap.set(id, equipo)
+    if (nombre) equiposMap.set(nombre, equipo)
+  }
+
+  return rows.map((row) => {
+    const currentLogo = pickStr(row, 'logo_public_id', 'equipo_logo_public_id', 'escudo_public_id', 'logo_url', 'equipo_logo_url', 'escudo_url')
+    if (currentLogo) return row
+    const equipo = equiposMap.get(equipoKey(row))
+    if (!equipo) return row
+    return {
+      ...row,
+      equipo_id: pickStr(row, 'equipo_id', 'id_equipo') || pickStr(equipo, 'id'),
+      equipo_nombre: pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre') || pickStr(equipo, 'nombre'),
+      sigla: pickStr(row, 'sigla') || pickStr(equipo, 'sigla'),
+      logo_url: pickStr(equipo, 'logo_url') || pickStr(row, 'logo_url', 'equipo_logo_url', 'escudo_url'),
+      logo_public_id: pickStr(equipo, 'logo_public_id') || pickStr(row, 'logo_public_id', 'equipo_logo_public_id', 'escudo_public_id'),
+    }
+  })
+}
+
 export async function fetchEstadisticasTorneo(torneoId: string): Promise<{
   tabla: VistaRow[]
   goleadores: VistaRow[]
@@ -60,6 +117,7 @@ export async function fetchEstadisticasFiltradas(
 
   if (!faseTorneoId) {
     tabla = filterVistaRowsPorCategoria(base.tabla, categoriaId)
+    tabla = await enrichTablaConLogos(tabla, categoriaId)
     return { tabla, goleadores, disciplina }
   }
 
@@ -67,6 +125,7 @@ export async function fetchEstadisticasFiltradas(
   if (!tabla.length) {
     tabla = filterVistaRowsPorFase(filterVistaRowsPorCategoria(base.tabla, categoriaId), faseTorneoId)
   }
+  tabla = await enrichTablaConLogos(tabla, categoriaId)
 
   const partidoIds = new Set(await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId))
   if (partidoIds.size) {
@@ -92,7 +151,7 @@ export async function fetchTablaPosicionesFaseGrupo(
   for (const args of variants) {
     const r = await supabase.rpc('obtener_tabla_posiciones_fase_grupo', args)
     if (!r.error && r.data) {
-      return (Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[]
+      return enrichTablaConLogos((Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[])
     }
     if (r.error) {
       console.error('Error en estadÃ­sticas', {
@@ -272,8 +331,8 @@ export function tablaPosicionRowsFromVista(rows: VistaRow[]): TablaPosicionRow[]
   return rows.map((row) => ({
     equipo_id: pickStr(row, 'equipo_id', 'id_equipo'),
     equipo_nombre: pickStr(row, 'equipo_nombre', 'nombre_equipo', 'equipo', 'club', 'nombre'),
-    logo_url: pickStr(row, 'logo_url', 'escudo_url', 'logo', 'escudo') || null,
-    logo_public_id: pickStr(row, 'logo_public_id', 'escudo_public_id') || null,
+    logo_url: pickStr(row, 'logo_url', 'equipo_logo_url', 'escudo_url', 'logo', 'escudo') || null,
+    logo_public_id: pickStr(row, 'logo_public_id', 'equipo_logo_public_id', 'escudo_public_id') || null,
     posicion: pickNum(row, 'posicion', 'pos'),
     pj: pickNum(row, 'pj'),
     pg: pickNum(row, 'pg'),

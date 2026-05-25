@@ -66,8 +66,8 @@ function PlayerPhoto({ row }: { row: VistaRow }) {
 function TeamLogo({ row }: { row: VistaRow }) {
   const nombre = pickNombreEquipo(row)
   const src = resolveDisplayImageUrl(
-    pickStr(row, 'logo_public_id', 'equipo_logo_public_id'),
-    pickStr(row, 'logo_url', 'equipo_logo_url'),
+    pickStr(row, 'logo_public_id', 'equipo_logo_public_id', 'escudo_public_id'),
+    pickStr(row, 'logo_url', 'equipo_logo_url', 'escudo_url', 'logo', 'escudo'),
     displayImagePresets.equipoLogoThumb(),
   )
   if (src) return <img src={src} alt="" className="h-14 w-14 rounded-xl border object-cover" />

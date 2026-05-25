@@ -293,7 +293,53 @@ export async function eliminarActaPartidoSeguro(partidoId: string): Promise<void
   })
   if (r.error) {
     console.error('Error eliminando acta', { partidoId, error: r.error })
+    if (isEstadoEnumCastError(r.error)) {
+      await eliminarActaPartidoFallback(partidoId)
+      return
+    }
     assertNoSupabaseError(r, 'programacion')
+  }
+}
+
+function isEstadoEnumCastError(error: unknown): boolean {
+  const msg = String((error as { message?: string } | null)?.message ?? '')
+  return msg.includes('estado_partido') && msg.includes('expression is of type text')
+}
+
+async function eliminarActaPartidoFallback(partidoId: string): Promise<void> {
+  console.warn('Usando eliminación manual de acta por error de casteo en RPC.', { partidoId })
+
+  const programacion = await supabase
+    .from('programaciones_partido')
+    .select('id')
+    .eq('partido_id', partidoId)
+    .maybeSingle()
+  assertNoSupabaseError(programacion, 'programacion')
+  const programacionId = (programacion.data as { id?: string } | null)?.id ?? ''
+
+  await limpiarEventosDeportivosPartido(partidoId)
+
+  const delActa = await supabase.from('actas_partido').delete().eq('partido_id', partidoId)
+  assertNoSupabaseError(delActa, 'programacion')
+
+  const nuevoEstado = programacionId ? 'programado' : 'pendiente_programar'
+  const upPartido = await supabase.from('partidos').update({ estado: nuevoEstado }).eq('id', partidoId)
+  if (upPartido.error) console.error('Error restaurando estado del partido tras eliminar acta', { partidoId, nuevoEstado, error: upPartido.error })
+  assertNoSupabaseError(upPartido, 'programacion')
+
+  if (programacionId) {
+    const upProgramacion = await supabase
+      .from('programaciones_partido')
+      .update({ estado: 'programado' })
+      .eq('id', programacionId)
+    if (upProgramacion.error) {
+      console.error('Error restaurando estado de programación tras eliminar acta', {
+        partidoId,
+        programacionId,
+        error: upProgramacion.error,
+      })
+    }
+    assertNoSupabaseError(upProgramacion, 'programacion')
   }
 }
 
