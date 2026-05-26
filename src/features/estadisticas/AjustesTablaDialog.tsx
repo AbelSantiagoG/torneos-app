@@ -22,12 +22,14 @@ import {
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  torneoId: string
+  categoriaId: string
   faseId: string
   row: TablaPosicionRow | null
   onSaved: () => void
 }
 
-export function AjustesTablaDialog({ open, onOpenChange, faseId, row, onSaved }: Props) {
+export function AjustesTablaDialog({ open, onOpenChange, torneoId, categoriaId, faseId, row, onSaved }: Props) {
   const [pj, setPj] = useState('0')
   const [pg, setPg] = useState('0')
   const [pe, setPe] = useState('0')
@@ -65,6 +67,8 @@ export function AjustesTablaDialog({ open, onOpenChange, faseId, row, onSaved }:
       fair_play: Number(fair),
     }
     const payload = {
+      torneo_id: torneoId,
+      categoria_id: categoriaId,
       fase_torneo_id: faseId,
       equipo_id: row.equipo_id,
       observaciones: obs.trim() || null,

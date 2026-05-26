@@ -41,6 +41,8 @@ function TeamShield({ row }: { row: TablaPosicionRow }) {
 type Props = {
   rows: VistaRow[]
   criterios: CriterioClasificacion[]
+  torneoId: string
+  categoriaId: string
   faseId: string
   onRefresh: () => void
 }
@@ -77,7 +79,7 @@ function readColumnPrefs(): ColumnKey[] {
   }
 }
 
-export function TablaPosicionesTable({ rows, criterios, faseId, onRefresh }: Props) {
+export function TablaPosicionesTable({ rows, criterios, torneoId, categoriaId, faseId, onRefresh }: Props) {
   const [editRow, setEditRow] = useState<TablaPosicionRow | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>(() => readColumnPrefs())
@@ -211,6 +213,8 @@ export function TablaPosicionesTable({ rows, criterios, faseId, onRefresh }: Pro
       <AjustesTablaDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+        torneoId={torneoId}
+        categoriaId={categoriaId}
         faseId={faseId}
         row={editRow}
         onSaved={onRefresh}

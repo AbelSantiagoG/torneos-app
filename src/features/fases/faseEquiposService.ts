@@ -77,3 +77,76 @@ export async function replaceFaseEquipos(params: {
   const ins = await supabase.from('fase_equipos').insert(rows)
   if (ins.error) throw toUserError(ins.error, 'fixture')
 }
+
+export async function asignarTodosEquiposCategoriaAFase(faseTorneoId: string, reemplazar = false): Promise<void> {
+  const { error } = await supabase.rpc('asignar_todos_equipos_categoria_a_fase', {
+    p_fase_torneo_id: faseTorneoId,
+    p_reemplazar: reemplazar,
+  })
+  if (error) throw toUserError(error, 'fixture')
+}
+
+export async function asignarClasificadosGeneralesAFase(params: {
+  faseDestinoId: string
+  faseOrigenId: string
+  cantidadClasificados: number
+  reemplazar?: boolean
+}): Promise<void> {
+  const { error } = await supabase.rpc('asignar_clasificados_generales_a_fase', {
+    p_fase_destino_id: params.faseDestinoId,
+    p_fase_origen_id: params.faseOrigenId,
+    p_cantidad_clasificados: params.cantidadClasificados,
+    p_reemplazar: Boolean(params.reemplazar),
+  })
+  if (error) throw toUserError(error, 'fixture')
+}
+
+export async function configurarCuadrangularesDesdeFaseAnterior(params: {
+  faseDestinoId: string
+  faseOrigenId: string
+  clasificadosPorGrupo: number
+  totalClasificados: number
+  reemplazar?: boolean
+}): Promise<void> {
+  const { error } = await supabase.rpc('configurar_cuadrangulares_desde_fase_anterior', {
+    p_fase_destino_id: params.faseDestinoId,
+    p_fase_origen_id: params.faseOrigenId,
+    p_clasificados_por_grupo: params.clasificadosPorGrupo,
+    p_total_clasificados: params.totalClasificados,
+    p_reemplazar: Boolean(params.reemplazar),
+  })
+  if (error) throw toUserError(error, 'fixture')
+}
+
+export async function guardarFaseConfiguracion(input: {
+  faseTorneoId: string
+  fuenteEquipos: string
+  faseOrigenId?: string | null
+  cantidadClasificados?: number | null
+  clasificadosPorGrupo?: number | null
+  tipoCruce?: string | null
+  idaVuelta?: boolean
+}): Promise<void> {
+  const payload = {
+    fase_torneo_id: input.faseTorneoId,
+    fuente_equipos: input.fuenteEquipos,
+    fase_origen_id: input.faseOrigenId ?? null,
+    cantidad_clasificados: input.cantidadClasificados ?? null,
+    clasificados_por_grupo: input.clasificadosPorGrupo ?? null,
+    tipo_cruce: input.tipoCruce ?? null,
+    ida_vuelta: Boolean(input.idaVuelta),
+  }
+
+  const upsert = await supabase.from('fase_configuracion').upsert(payload, {
+    onConflict: 'fase_torneo_id',
+  })
+  if (!upsert.error) return
+
+  const update = await supabase.from('fase_configuracion').update(payload).eq('fase_torneo_id', input.faseTorneoId)
+  if (!update.error) return
+
+  const insert = await supabase.from('fase_configuracion').insert(payload)
+  if (insert.error) {
+    console.error('No se pudo guardar configuración de fase', { payload, error: insert.error })
+  }
+}

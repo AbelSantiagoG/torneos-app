@@ -418,6 +418,8 @@ export function EstadisticasPage() {
                           <TablaPosicionesTable
                             rows={tabla}
                             criterios={criteriosOrden}
+                            torneoId={torneoId}
+                            categoriaId={selectedCategoria}
                             faseId={selectedFase}
                             onRefresh={refrescarEstadisticas}
                           />
@@ -441,6 +443,8 @@ export function EstadisticasPage() {
                                   <TablaPosicionesTable
                                     rows={rowsGrupoConFallback(grupo.id, rows)}
                                     criterios={criteriosOrden}
+                                    torneoId={torneoId}
+                                    categoriaId={selectedCategoria}
                                     faseId={selectedFase}
                                     onRefresh={refrescarEstadisticas}
                                   />
@@ -453,6 +457,8 @@ export function EstadisticasPage() {
                       <TablaPosicionesTable
                         rows={tabla}
                         criterios={criteriosOrden}
+                        torneoId={torneoId}
+                        categoriaId={selectedCategoria}
                         faseId={selectedFase}
                         onRefresh={refrescarEstadisticas}
                       />

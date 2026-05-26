@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -54,7 +54,9 @@ import {
   countPartidosEnCategoria,
   countPartidosEnFase,
   generarFixtureCategoria,
+  generarFixtureEliminatoriaDirectaFase,
   generarFixtureTodosContraTodosFase,
+  generarLlavesEliminatoriaSinEquipos,
   eliminarFixtureFaseSeguro,
   eliminarJornadaFixtureSeguro,
   eliminarPartidoFixtureSeguro,
@@ -88,6 +90,10 @@ import {
   type FaseTorneoUi,
 } from '@/features/fases/fasesTorneoService'
 import {
+  asignarClasificadosGeneralesAFase,
+  asignarTodosEquiposCategoriaAFase,
+  configurarCuadrangularesDesdeFaseAnterior,
+  guardarFaseConfiguracion,
   isMissingFaseEquipos,
   listFaseEquipos,
   replaceFaseEquipos,
@@ -181,7 +187,7 @@ function ResultadoPartido({ partido, played }: { partido: PartidoListaUi; played
   return (
     <div className="text-center">
       <span className="font-bold tabular-nums">
-        {partido.golesLocal ?? '—'} - {partido.golesVisitante ?? '—'}
+        {partido.golesLocal ?? 'â€”'} - {partido.golesVisitante ?? 'â€”'}
       </span>
       {definicion === 'walkover' || partido.resultadoNota ? (
         <p className="mt-0.5 text-xs font-normal text-muted-foreground">
@@ -606,14 +612,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     ].some((token) => msg.includes(token))
   }
 
-  const requireFaseEspecifica = (accion = 'realizar esta acciÃ³n'): FaseTorneoUi | null => {
+  const requireFaseEspecifica = (accion = 'realizar esta acciÃƒÂ³n'): FaseTorneoUi | null => {
     if (!selectedFixtureFase) {
-      toast.error(`Selecciona una fase especÃ­fica para ${accion}.`)
+      toast.error(`Selecciona una fase especÃƒÂ­fica para ${accion}.`)
       return null
     }
     const fase = fasesList.find((item) => item.id === selectedFixtureFase) ?? null
     if (!fase) {
-      toast.error('Selecciona una fase especÃ­fica.')
+      toast.error('Selecciona una fase especÃƒÂ­fica.')
       return null
     }
     return fase
@@ -641,6 +647,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const faseOrigenSeleccionada = () =>
     fasesList.find((fase) => fase.id === faseOrigenId) ?? siguienteFaseQ.data?.faseActual ?? fasesList[fasesList.length - 1] ?? null
 
+  const faseAnteriorDe = (fase: FaseTorneoUi) =>
+    fasesList
+      .filter((item) => item.categoria_id === fase.categoria_id && item.orden < fase.orden)
+      .sort((a, b) => b.orden - a.orden)[0] ?? null
+
   const isCantidadEliminatoriaValida = (value: number) => [2, 4, 8, 16, 32].includes(value)
 
   const buildFaseDescripcion = (esSiguiente: boolean) => {
@@ -649,7 +660,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     const origen = faseOrigenSeleccionada()
     partes.push(
       [
-        'Configuración siguiente fase:',
+        'ConfiguraciÃ³n siguiente fase:',
         `origen=${origen?.nombre ?? 'sin fase origen'}`,
         `fuente=${clasificadosModo}`,
         `criterio=${clasificadosCriterio}`,
@@ -666,7 +677,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }
 
   const openCrearJornada = () => {
-    if (!requireFaseEspecifica('realizar esta acciÃ³n')) return
+    if (!requireFaseEspecifica('realizar esta acciÃƒÂ³n')) return
     const next = jornadas.length ? Math.max(...jornadas) + 1 : 1
     setJornadaDraft(String(next))
     setCreateJornadaOpen(true)
@@ -675,7 +686,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const confirmarCrearJornada = () => {
     const jornada = Number(jornadaDraft)
     if (!Number.isInteger(jornada) || jornada < 1) {
-      toast.error('Indica un número de jornada válido.')
+      toast.error('Indica un nÃºmero de jornada vÃ¡lido.')
       return
     }
     setNuevoJornada(String(jornada))
@@ -701,7 +712,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const openDeleteJornada = (jornada: number, grupoId?: string | null, grupoNombre?: string | null) => {
     if (!selectedCategoria) return
-    if (!requireFaseEspecifica('realizar esta acciÃ³n')) return
+    if (!requireFaseEspecifica('realizar esta acciÃƒÂ³n')) return
     setDeleteJornada({ jornada, grupoId: grupoId ?? null, grupoNombre: grupoNombre ?? null })
   }
 
@@ -727,7 +738,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         await exec(false)
       } catch (e) {
         if (!isForceDeleteError(e)) throw e
-        const ok = confirm('Esta jornada tiene información asociada. Confirma si deseas eliminarla.')
+        const ok = confirm('Esta jornada tiene informaciÃ³n asociada. Confirma si deseas eliminarla.')
         if (!ok) return
         await exec(true)
       }
@@ -773,7 +784,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const handleCrearFase = async (esSiguiente = false) => {
     if (!selectedCategoria) {
-      toast.error('Selecciona una categoría en «Por categoría».')
+      toast.error('Selecciona una categorÃ­a en Â«Por categorÃ­aÂ».')
       return
     }
     if (!faseNombre.trim()) {
@@ -790,30 +801,30 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       return
     }
     if (esSiguiente && faseTipo === 'todos_contra_todos' && clasificadosModo === 'clasificacion') {
-      toast.error('Todos contra todos como siguiente fase debe configurarse con selección manual, todos los equipos o sin equipos.')
+      toast.error('Todos contra todos como siguiente fase debe configurarse con selecciÃ³n manual, todos los equipos o sin equipos.')
       return
     }
     if (esSiguiente && faseTipo === 'eliminatoria_directa' && clasificadosModo !== 'sin_equipos') {
       const cantidad = Number(faseClasificadosTotal)
       if (!isCantidadEliminatoriaValida(cantidad)) {
-        toast.error('La eliminación directa solo permite 2, 4, 8, 16 o 32 clasificados.')
+        toast.error('La eliminaciÃ³n directa solo permite 2, 4, 8, 16 o 32 clasificados.')
         return
       }
       if (clasificadosModo === 'todos' && cantidad > equiposCat.length) {
-        toast.error('No puedes clasificar más equipos de los existentes.')
+        toast.error('No puedes clasificar mÃ¡s equipos de los existentes.')
         return
       }
     }
     if (esSiguiente && faseTipo === 'cuadrangulares') {
       const cantidad = Number(faseCuadrangularesCantidad)
       if (!Number.isInteger(cantidad) || cantidad < 1) {
-        toast.error('Indica cuántos cuadrangulares quieres crear.')
+        toast.error('Indica cuÃ¡ntos cuadrangulares quieres crear.')
         return
       }
       if (clasificadosModo === 'clasificacion' && origen && isFasePorGrupos(origen.tipo)) {
         const gruposOrigen = await listGruposFase(origen.id)
         if (gruposOrigen.length > 8) {
-          toast.error('No se puede crear cuadrangulares automáticamente si la fase anterior tiene más de 8 grupos.')
+          toast.error('No se puede crear cuadrangulares automÃ¡ticamente si la fase anterior tiene mÃ¡s de 8 grupos.')
           return
         }
       }
@@ -840,7 +851,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           })
         } catch (err) {
           if (isMissingFaseEquipos(err)) {
-            toast.warning('Fase creada. Para guardar equipos participantes falta aplicar la migración fase_equipos.')
+            toast.warning('Fase creada. Para guardar equipos participantes falta aplicar la migraciÃ³n fase_equipos.')
           } else {
             throw err
           }
@@ -891,7 +902,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       void siguienteFaseQ.refetch()
       invalidatePartidos()
     } catch {
-      toast.error('No se puede eliminar esta fase porque tiene información asociada. Elimina primero los partidos o archiva la fase.')
+      toast.error('No se puede eliminar esta fase porque tiene informaciÃ³n asociada. Elimina primero los partidos o archiva la fase.')
     } finally {
       setFaseDeleting(false)
     }
@@ -919,7 +930,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const confirmarCambioGrupo = (grupo?: GrupoFaseUi | null): boolean => {
     if (!grupo || grupo.partidosJugados <= 0) return true
-    return confirm('Esta fase ya tiene partidos jugados. Modificar el grupo puede dejar el fixture inconsistente. ¿Deseas continuar?')
+    return confirm('Esta fase ya tiene partidos jugados. Modificar el grupo puede dejar el fixture inconsistente. Â¿Deseas continuar?')
   }
 
   const handleCrearGrupos = async () => {
@@ -981,7 +992,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     const equiposGrupo = grupoEquiposPorGrupo.get(grupo.id) ?? []
     if (
       equiposGrupo.length > 0 &&
-      !confirm('Este grupo tiene equipos asignados. Si lo eliminas, esos equipos quedarán sin grupo en esta fase. ¿Deseas continuar?')
+      !confirm('Este grupo tiene equipos asignados. Si lo eliminas, esos equipos quedarÃ¡n sin grupo en esta fase. Â¿Deseas continuar?')
     ) {
       return
     }
@@ -1094,18 +1105,72 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       toast.error('Selecciona una categoría.')
       return
     }
-    const faseObjetivo = requireFaseEspecifica('realizar esta acciÃ³n')
+    const faseObjetivo = requireFaseEspecifica('realizar esta acción')
     if (!faseObjetivo) return
     setGenerandoFixture(true)
     try {
-      const nEq = await countEquiposEnCategoria(selectedCategoria)
-      if (nEq < 2) {
-        toast.error('Se necesitan al menos dos equipos en la categoría para generar el fixture.')
+      const tipoFase = String(faseObjetivo.tipo ?? 'todos_contra_todos')
+      const origen = fasesList.find((fase) => fase.id === faseOrigenId) ?? faseAnteriorDe(faseObjetivo)
+      const cantidadClasificados = Number(faseClasificadosTotal)
+      const idaVuelta = faseModalidad === 'ida_vuelta'
+      const nPar = await countPartidosEnFase(faseObjetivo.id)
+
+      if (nPar > 0) {
+        toast.error('Esta fase ya tiene fixture generado.')
         return
       }
-      const tipoFase = String(faseObjetivo?.tipo ?? 'todos_contra_todos')
+      await guardarFaseConfiguracion({
+        faseTorneoId: faseObjetivo.id,
+        fuenteEquipos: clasificadosModo,
+        faseOrigenId: origen?.id ?? null,
+        cantidadClasificados: Number.isFinite(cantidadClasificados) ? cantidadClasificados : null,
+        clasificadosPorGrupo: Number(faseClasificadosPorGrupo) || null,
+        tipoCruce: faseCruces,
+        idaVuelta,
+      })
 
-      if (faseObjetivo && isFasePorGrupos(tipoFase)) {
+      if (isFasePorGrupos(tipoFase)) {
+        if (tipoFase === 'cuadrangulares' && clasificadosModo === 'clasificacion') {
+          if (!origen) {
+            toast.error('Selecciona la fase anterior de referencia.')
+            return
+          }
+          if (isFasePorGrupos(origen.tipo)) {
+            const gruposOrigen = await listGruposFase(origen.id)
+            if (gruposOrigen.length > 8) {
+              toast.error('No se pueden crear cuadrangulares automáticamente si la fase anterior tiene más de 8 grupos.')
+              return
+            }
+          }
+          await configurarCuadrangularesDesdeFaseAnterior({
+            faseDestinoId: faseObjetivo.id,
+            faseOrigenId: origen.id,
+            clasificadosPorGrupo: Number(faseClasificadosPorGrupo) || 4,
+            totalClasificados: 8,
+            reemplazar: true,
+          })
+          void refetchGruposFase()
+          void refetchGrupoEquipos()
+        }
+
+        if (tipoFase === 'cuadrangulares') {
+          const [gruposActuales, equiposGrupoActuales] = await Promise.all([
+            listGruposFase(faseObjetivo.id),
+            listGrupoEquipos(faseObjetivo.id),
+          ])
+          const counts = new Map<string, number>()
+          for (const item of equiposGrupoActuales) counts.set(item.grupoId, (counts.get(item.grupoId) ?? 0) + 1)
+          const okCuadrangular =
+            gruposActuales.length === 2 &&
+            equiposGrupoActuales.length === 8 &&
+            gruposActuales.every((grupo) => (counts.get(grupo.id) ?? 0) === 4)
+          if (!okCuadrangular) {
+            toast.error('Un cuadrangular requiere exactamente 8 equipos distribuidos en 2 grupos de 4.')
+            setActiveTab('grupos')
+            return
+          }
+        }
+
         try {
           await validarGruposAntesDeFixture(faseObjetivo.id)
         } catch (e) {
@@ -1115,46 +1180,98 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           return
         }
         await generarFixtureGruposFase(faseObjetivo.id, false)
-        toast.success('Fixture por grupos generado.')
+        toast.success(tipoFase === 'cuadrangulares' ? 'Fixture de cuadrangulares generado.' : 'Fixture por grupos generado.')
         setFixtureOpen(false)
         invalidatePartidos()
         refetchFixturePorGrupos()
         return
       }
 
-      if (faseObjetivo && tipoFase !== 'todos_contra_todos') {
-        toast.error('Este tipo de fase todavía no tiene generación automática de fixture.')
-        return
-      }
-
-      const nPar = faseObjetivo ? await countPartidosEnFase(faseObjetivo.id) : await countPartidosEnCategoria(selectedCategoria)
-      if (nPar > 0) {
-        toast.error(faseObjetivo ? 'Esta fase ya tiene fixture generado.' : 'Esta categoría ya tiene partidos en el fixture.')
-        return
-      }
-      if (faseObjetivo && tipoFase === 'todos_contra_todos') {
-        const equiposFase = await listFaseEquipos(faseObjetivo.id)
-        if (equiposFase.length > 0) {
-          await generarFixtureTodosContraTodosFase({
-            torneoId,
-            categoriaId: selectedCategoria,
-            faseTorneoId: faseObjetivo.id,
-            equipoIds: equiposFase.map((item) => item.equipo_id),
-            idaVuelta: false,
+      if (tipoFase === 'todos_contra_todos') {
+        if (clasificadosModo === 'todos') {
+          await asignarTodosEquiposCategoriaAFase(faseObjetivo.id, false)
+        } else if (clasificadosModo === 'clasificacion') {
+          if (!origen) {
+            toast.error('Selecciona la fase anterior de referencia.')
+            return
+          }
+          await asignarClasificadosGeneralesAFase({
+            faseDestinoId: faseObjetivo.id,
+            faseOrigenId: origen.id,
+            cantidadClasificados,
+            reemplazar: true,
           })
-        } else if (faseObjetivo.orden > 1) {
-          toast.error('No se puede generar fixture sin equipos asignados a esta fase.')
+        }
+
+        const equiposFase = await listFaseEquipos(faseObjetivo.id)
+        if (!equiposFase.length && faseObjetivo.orden > 1) {
+          toast.error('No hay equipos asignados a esta fase. Primero selecciona o asigna los equipos participantes.')
           return
+        }
+        if (equiposFase.length) {
+          await generarFixtureTodosContraTodosFase({ faseTorneoId: faseObjetivo.id, idaVuelta })
         } else {
+          const nEq = await countEquiposEnCategoria(selectedCategoria)
+          if (nEq < 2) {
+            toast.error('Se necesitan al menos dos equipos en la categoría para generar el fixture.')
+            return
+          }
           await generarFixtureCategoria(selectedCategoria)
           await assignPartidosCategoriaSinFase(selectedCategoria, faseObjetivo.id)
         }
-      } else {
-        await generarFixtureCategoria(selectedCategoria)
-        if (faseObjetivo) {
-          await assignPartidosCategoriaSinFase(selectedCategoria, faseObjetivo.id)
+      } else if (tipoFase === 'eliminatoria_directa') {
+        if (!isCantidadEliminatoriaValida(cantidadClasificados)) {
+          toast.error('La eliminación directa solo permite 2, 4, 8, 16 o 32 equipos.')
+          return
         }
+        if (clasificadosModo === 'sin_equipos' || faseCruces === 'sin_equipos') {
+          await generarLlavesEliminatoriaSinEquipos({
+            faseTorneoId: faseObjetivo.id,
+            cantidadEquipos: cantidadClasificados,
+            idaVuelta,
+          })
+          toast.success('Llaves de eliminatoria creadas.')
+          setFixtureOpen(false)
+          invalidatePartidos()
+          return
+        }
+        if (clasificadosModo === 'todos') {
+          if (cantidadClasificados > equiposCat.length) {
+            toast.error('No puedes clasificar más equipos de los que participaron.')
+            return
+          }
+          await asignarTodosEquiposCategoriaAFase(faseObjetivo.id, false)
+        } else if (clasificadosModo === 'clasificacion') {
+          if (!origen) {
+            toast.error('Selecciona la fase anterior de referencia.')
+            return
+          }
+          await asignarClasificadosGeneralesAFase({
+            faseDestinoId: faseObjetivo.id,
+            faseOrigenId: origen.id,
+            cantidadClasificados,
+            reemplazar: true,
+          })
+        }
+        const equiposFase = await listFaseEquipos(faseObjetivo.id)
+        if (!equiposFase.length) {
+          toast.error('No hay equipos asignados a esta fase. Primero selecciona o asigna los equipos participantes.')
+          return
+        }
+        if (!isCantidadEliminatoriaValida(equiposFase.length)) {
+          toast.error('La eliminación directa solo permite 2, 4, 8, 16 o 32 equipos.')
+          return
+        }
+        await generarFixtureEliminatoriaDirectaFase({
+          faseTorneoId: faseObjetivo.id,
+          idaVuelta,
+          tipoCruce: faseCruces === 'serpiente' ? 'serpiente' : 'primero_vs_ultimo',
+        })
+      } else {
+        toast.error('Selecciona un tipo de fase válido.')
+        return
       }
+
       toast.success('Fixture generado.')
       setFixtureOpen(false)
       invalidatePartidos()
@@ -1164,7 +1281,6 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       setGenerandoFixture(false)
     }
   }
-
   const openEdit = (p: PartidoListaUi) => {
     setEditPartido(p)
     setEditJornada(String(p.jornada ?? ''))
@@ -1212,7 +1328,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       } catch (e) {
         if (!isForceDeleteError(e)) throw e
         const ok = confirm(
-          'Este partido tiene información asociada. Si lo eliminas, también se eliminarán su programación, acta, goles, tarjetas y registros relacionados. ¿Deseas continuar?',
+          'Este partido tiene informaciÃ³n asociada. Si lo eliminas, tambiÃ©n se eliminarÃ¡n su programaciÃ³n, acta, goles, tarjetas y registros relacionados. Â¿Deseas continuar?',
         )
         if (!ok) return
         await eliminarPartidoFixtureSeguro(partidoId, true)
@@ -1228,7 +1344,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const eliminarPartidoProgramado = async (p: PartidoListaUi) => {
     const ok = confirm(
-      'Este partido ya está programado. Si lo eliminas, también se eliminará su programación y cualquier información asociada. ¿Deseas continuar?',
+      'Este partido ya estÃ¡ programado. Si lo eliminas, tambiÃ©n se eliminarÃ¡ su programaciÃ³n y cualquier informaciÃ³n asociada. Â¿Deseas continuar?',
     )
     if (!ok) return
     try {
@@ -1237,7 +1353,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       } catch (e) {
         if (!isForceDeleteError(e)) throw e
         const force = confirm(
-          'Este partido tiene información asociada. Si continúas, se eliminarán programación, acta, goles, tarjetas y registros relacionados.',
+          'Este partido tiene informaciÃ³n asociada. Si continÃºas, se eliminarÃ¡n programaciÃ³n, acta, goles, tarjetas y registros relacionados.',
         )
         if (!force) return
         await eliminarPartidoFixtureSeguro(p.id, true)
@@ -1251,12 +1367,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const eliminarFixtureActual = async () => {
     if (!selectedCategoria) {
-      toast.error('Selecciona una categoría.')
+      toast.error('Selecciona una categorÃ­a.')
       return
     }
     const faseId = selectedFaseIdForRpc()
     if (!faseId) {
-      toast.error('Selecciona una fase especÃ­fica para realizar esta acciÃ³n.')
+      toast.error('Selecciona una fase especÃƒÂ­fica para realizar esta acciÃƒÂ³n.')
       return
     }
     setDeleteFixtureLoading(true)
@@ -1274,7 +1390,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         await exec(false)
       } catch (e) {
         if (!isForceDeleteError(e)) throw e
-        const ok = confirm('Este fixture tiene información asociada. Confirma si deseas eliminarlo.')
+        const ok = confirm('Este fixture tiene informaciÃ³n asociada. Confirma si deseas eliminarlo.')
         if (!ok) return
         await exec(true)
       }
@@ -1293,12 +1409,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const crearManual = async () => {
     if (!torneoId || !selectedCategoria) {
-      toast.error('Selecciona una categorÃ­a.')
+      toast.error('Selecciona una categorÃƒÂ­a.')
       return
     }
     const fase = fasesList.find((item) => item.id === manualFaseId) ?? null
     if (!fase) {
-      toast.error('Selecciona una fase especÃ­fica.')
+      toast.error('Selecciona una fase especÃƒÂ­fica.')
       return
     }
     const jornada = Number(nuevoJornada)
@@ -1348,16 +1464,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     if (!torneoId || !sorteoCategoria) return
     const dias = Number(sorteoDias)
     if (Number.isNaN(dias) || dias < 1) {
-      toast.error('Indica un número de días válido (1 o más).')
+      toast.error('Indica un nÃºmero de dÃ­as vÃ¡lido (1 o mÃ¡s).')
       return
     }
     const canchasActivas = canchas.filter((c) => c.activa !== false)
     if (!canchasActivas.length) {
-      toast.error('Configura al menos una cancha activa en Configuración.')
+      toast.error('Configura al menos una cancha activa en ConfiguraciÃ³n.')
       return
     }
     if (!pendientesSorteo.length) {
-      toast.message('No hay partidos pendientes por programar. Primero crea el fixture en Por categoría.')
+      toast.message('No hay partidos pendientes por programar. Primero crea el fixture en Por categorÃ­a.')
       return
     }
     try {
@@ -1370,11 +1486,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         dias,
       })
       setSorteoDrafts(borrador)
-      toast.success('Propuesta generada. Revisa y guarda cuando esté listo.')
+      toast.success('Propuesta generada. Revisa y guarda cuando estÃ© listo.')
     } catch (e) {
       console.error('Error generando borrador de sorteo', { categoriaId: sorteoCategoria, fechaInicio: sorteoFecha, dias, error: e })
       const msg = translateUserError(e, 'programacion')
-      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo actualizar la programación.')
+      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo actualizar la programaciÃ³n.')
     }
   }
 
@@ -1408,7 +1524,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.error('Completa al menos un partido con fecha, cancha y hora antes de guardar.')
         return
       }
-      toast.success(`Se guardaron ${guardados} programación${guardados === 1 ? '' : 'es'}.`)
+      toast.success(`Se guardaron ${guardados} programaciÃ³n${guardados === 1 ? '' : 'es'}.`)
       setSorteoDrafts({})
       invalidatePartidos()
     } catch (e) {
@@ -1437,11 +1553,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setGuardandoProgramacion(true)
     try {
       await upsertProgramacion(progPartido.programacionId ?? null, payload)
-      toast.success('Programación guardada')
+      toast.success('ProgramaciÃ³n guardada')
       setProgPartido(null)
       invalidatePartidos()
     } catch (e) {
-      console.error('Error guardando programaciÃ³n', { payload, error: e })
+      console.error('Error guardando programaciÃƒÂ³n', { payload, error: e })
       const msg = translateUserError(e, 'programacion')
       toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo programar el partido. Revisa fecha, hora y cancha.')
     } finally {
@@ -1461,7 +1577,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   if (!torneoId) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Partidos / Fixture" description="Programación de partidos" />
+        <PageHeader title="Partidos / Fixture" description="ProgramaciÃ³n de partidos" />
         <EmptyState
           icon={Calendar}
           title="Sin torneo activo"
@@ -1475,25 +1591,167 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     <div className="space-y-6">
       <PageHeader
         title="Partidos / Fixture"
-        description="1) Por categoría: emparejamientos y jornadas. 2) Sorteo: fecha, cancha y hora en programaciones. 3) Por fecha: solo lo ya programado."
+        description="1) Por categorÃ­a: emparejamientos y jornadas. 2) Sorteo: fecha, cancha y hora en programaciones. 3) Por fecha: solo lo ya programado."
       />
 
       <Dialog open={fixtureOpen} onOpenChange={setFixtureOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Generar fixture</DialogTitle>
             <DialogDescription>
-              {fixtureEsPorGrupos
-                ? 'Se crearán jornadas dentro de cada grupo de la fase seleccionada. La fecha y hora se asignan después en Sorteo de horarios.'
-                : 'Se crearán las jornadas y los enfrentamientos en la categoría seleccionada. La fecha y hora de juego se asignan después en Sorteo de horarios.'}
+              {faseActualFixture?.tipo === 'eliminatoria_directa'
+                ? 'Configura la llave antes de generar los cruces. Final y tercer puesto no son tipos de fase independientes.'
+                : fixtureEsPorGrupos
+                ? 'Se crearÃ¡n jornadas dentro de cada grupo de la fase seleccionada. La fecha y hora se asignan despuÃ©s en Sorteo de horarios.'
+                : 'Se crearÃ¡n las jornadas y los enfrentamientos en la categorÃ­a seleccionada. La fecha y hora de juego se asignan despuÃ©s en Sorteo de horarios.'}
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-3 py-2">
+            {faseActualFixture && faseActualFixture.orden > 1 && (
+              <div className="space-y-1">
+                <Label>Fase anterior de referencia</Label>
+                <Select
+                  value={faseOrigenId || faseAnteriorDe(faseActualFixture)?.id || undefined}
+                  onValueChange={setFaseOrigenId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Elige la fase anterior" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fasesList
+                      .filter((fase) => fase.id !== faseActualFixture.id)
+                      .map((fase) => (
+                        <SelectItem key={fase.id} value={fase.id}>
+                          {fase.nombre}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {faseActualFixture?.tipo === 'todos_contra_todos' && faseActualFixture.orden > 1 && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Fuente de equipos</Label>
+                  <Select value={clasificadosModo} onValueChange={setClasificadosModo}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual">Equipos ya seleccionados</SelectItem>
+                      <SelectItem value="todos">Todos los equipos de la categoría</SelectItem>
+                      <SelectItem value="clasificacion">Clasificación de fase anterior</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Cantidad de clasificados</Label>
+                  <Input
+                    type="number"
+                    min="2"
+                    value={faseClasificadosTotal}
+                    onChange={(e) => setFaseClasificadosTotal(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+            {faseActualFixture?.tipo === 'cuadrangulares' && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <Label>Fuente</Label>
+                  <Select value={clasificadosModo} onValueChange={setClasificadosModo}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual">Grupos ya configurados</SelectItem>
+                      <SelectItem value="clasificacion">Desde fase anterior</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Clasificados por grupo</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={faseClasificadosPorGrupo}
+                    onChange={(e) => setFaseClasificadosPorGrupo(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Total clasificados</Label>
+                  <Input value="8" readOnly />
+                </div>
+              </div>
+            )}
+            {faseActualFixture?.tipo === 'eliminatoria_directa' && (
+              <div className="grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <Label>Modalidad</Label>
+                    <Select value={faseModalidad} onValueChange={setFaseModalidad}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="solo_ida">Solo ida</SelectItem>
+                        <SelectItem value="ida_vuelta">Ida y vuelta</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Fuente de equipos</Label>
+                    <Select value={clasificadosModo} onValueChange={setClasificadosModo}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">Equipos ya seleccionados</SelectItem>
+                        <SelectItem value="clasificacion">Clasificación anterior</SelectItem>
+                        <SelectItem value="todos">Todos los equipos</SelectItem>
+                        <SelectItem value="sin_equipos">Llaves sin equipos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Clasificados</Label>
+                    <Select value={faseClasificadosTotal} onValueChange={setFaseClasificadosTotal}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[2, 4, 8, 16, 32].map((value) => (
+                          <SelectItem key={value} value={String(value)}>
+                            {value} equipos
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label>Cruce</Label>
+                  <Select value={faseCruces} onValueChange={setFaseCruces}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="primero_vs_ultimo">Primero vs último</SelectItem>
+                      <SelectItem value="serpiente">Orden serpiente</SelectItem>
+                      <SelectItem value="manual">Manual / orden normal</SelectItem>
+                      <SelectItem value="sin_equipos">Generar llaves sin equipos</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setFixtureOpen(false)}>
               Cancelar
             </Button>
             <Button type="button" onClick={() => void ejecutarGenerarFixture()} disabled={generandoFixture}>
-              {generandoFixture ? 'Generando…' : fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar'}
+              {generandoFixture ? 'Generandoâ€¦' : fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1583,7 +1841,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nuevo partido manual</DialogTitle>
-            <DialogDescription>En la categoría seleccionada.</DialogDescription>
+            <DialogDescription>En la categorÃ­a seleccionada.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="space-y-1">
@@ -1621,7 +1879,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <Input value={nuevoJornada} onChange={(e) => setNuevoJornada(e.target.value)} type="number" />
             </div>
             <div className="space-y-1">
-              <Label>Orden (opcional, 0 = automático)</Label>
+              <Label>Orden (opcional, 0 = automÃ¡tico)</Label>
               <Input value={nuevoOrden} onChange={(e) => setNuevoOrden(e.target.value)} type="number" />
             </div>
             <div className="space-y-1">
@@ -1695,7 +1953,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-2">
-            <Label>Número de jornada</Label>
+            <Label>NÃºmero de jornada</Label>
             <Input value={jornadaDraft} onChange={(e) => setJornadaDraft(e.target.value)} type="number" min={1} />
           </div>
           <DialogFooter>
@@ -1714,16 +1972,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           <DialogHeader>
             <DialogTitle>
               Eliminar jornada {deleteJornada?.jornada}
-              {deleteJornada?.grupoNombre ? ` · ${deleteJornada.grupoNombre}` : ''}
+              {deleteJornada?.grupoNombre ? ` Â· ${deleteJornada.grupoNombre}` : ''}
             </DialogTitle>
             <DialogDescription>
-              Esta acción eliminará todos los partidos de la jornada seleccionada. Si existen programaciones o actas asociadas,
-              también podrían verse afectadas. ¿Deseas continuar?
+              Esta acciÃ³n eliminarÃ¡ todos los partidos de la jornada seleccionada. Si existen programaciones o actas asociadas,
+              tambiÃ©n podrÃ­an verse afectadas. Â¿Deseas continuar?
             </DialogDescription>
           </DialogHeader>
           {deleteJornada && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-              Si Supabase detecta información asociada, se pedirá una confirmación adicional antes de forzar la eliminación.
+              Si Supabase detecta informaciÃ³n asociada, se pedirÃ¡ una confirmaciÃ³n adicional antes de forzar la eliminaciÃ³n.
             </div>
           )}
           <DialogFooter>
@@ -1746,7 +2004,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Editar jornada</DialogTitle>
-            <DialogDescription>Cambia el número de jornada y el orden de los partidos incluidos.</DialogDescription>
+            <DialogDescription>Cambia el nÃºmero de jornada y el orden de los partidos incluidos.</DialogDescription>
           </DialogHeader>
           <div className="max-h-[60vh] space-y-3 overflow-y-auto py-2">
             {editJornadaRows.map((row, idx) => (
@@ -1798,7 +2056,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       <Dialog open={Boolean(progPartido)} onOpenChange={(o) => !o && setProgPartido(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{progPartido?.programacionId ? 'Editar programación' : 'Programar partido'}</DialogTitle>
+            <DialogTitle>{progPartido?.programacionId ? 'Editar programaciÃ³n' : 'Programar partido'}</DialogTitle>
             <DialogDescription>
               Modifica fecha, horas, cancha, estado u observaciones. Se evita duplicar la misma cancha y hora de inicio.
             </DialogDescription>
@@ -1871,7 +2129,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 lg:inline-flex lg:w-auto">
-          <TabsTrigger value="categoria">Por Categoría</TabsTrigger>
+          <TabsTrigger value="categoria">Por CategorÃ­a</TabsTrigger>
           <TabsTrigger value="sorteo">Sorteo de Horarios</TabsTrigger>
           <TabsTrigger value="fecha">Por Fecha</TabsTrigger>
           <TabsTrigger value="grupos">Grupos</TabsTrigger>
@@ -1889,14 +2147,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               ) : categorias.length === 0 ? (
                 <EmptyState
                   icon={Calendar}
-                  title="Sin categorías"
-                  description="Crea categorías antes de organizar el fixture."
+                  title="Sin categorÃ­as"
+                  description="Crea categorÃ­as antes de organizar el fixture."
                 />
               ) : (
                 <div className="flex flex-wrap items-end gap-3">
                   <Select value={selectedCategoria} onValueChange={setSelectedCategoria}>
                     <SelectTrigger className="w-full md:w-64">
-                      <SelectValue placeholder="Categoría" />
+                      <SelectValue placeholder="CategorÃ­a" />
                     </SelectTrigger>
                     <SelectContent>
                       {categorias.map((cat) => (
@@ -1927,7 +2185,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                      if (requireFaseEspecifica('realizar esta acciÃƒÂ³n')) setFixtureOpen(true)
                     }}
                   >
                     {fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar fixture'}
@@ -1968,7 +2226,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               {fixtureEsPorGrupos && (
                 <p className="mt-3 text-sm text-muted-foreground">
                   Esta fase genera fixture todos contra todos dentro de cada grupo. Si faltan grupos o equipos asignados,
-                  usa la pestaña Grupos antes de generar.
+                  usa la pestaÃ±a Grupos antes de generar.
                 </p>
               )}
             </CardContent>
@@ -1980,7 +2238,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             fixtureGruposPorGrupo.length === 0 ? (
               <EmptyState
                 icon={Calendar}
-                title={gruposConEquiposAsignados ? 'Esta fase todavía no tiene fixture generado' : 'Sin grupos listos para fixture'}
+                title={gruposConEquiposAsignados ? 'Esta fase todavÃ­a no tiene fixture generado' : 'Sin grupos listos para fixture'}
                 description={
                   gruposConEquiposAsignados
                     ? 'Genera el fixture por grupos para ver las jornadas.'
@@ -1992,7 +2250,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       type="button"
                       variant="default"
                       onClick={() => {
-                        if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                        if (requireFaseEspecifica('realizar esta acciÃƒÂ³n')) setFixtureOpen(true)
                       }}
                     >
                       Generar fixture por grupos
@@ -2080,8 +2338,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                     {partido.fecha || partido.hora || partido.cancha ? (
                                       <p className="mt-2 text-xs text-muted-foreground">
                                         {partido.fecha ? formatDate(partido.fecha) : ''}
-                                        {partido.hora ? ` · ${partido.hora}` : ''}
-                                        {partido.cancha ? ` · ${partido.cancha}` : ''}
+                                        {partido.hora ? ` Â· ${partido.hora}` : ''}
+                                        {partido.cancha ? ` Â· ${partido.cancha}` : ''}
                                       </p>
                                     ) : null}
                                     <div className="mt-3 flex justify-end gap-2">
@@ -2119,14 +2377,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           ) : partidosCategoria.length === 0 ? (
             <EmptyState
               icon={Calendar}
-              title="Sin partidos en esta categoría"
+              title="Sin partidos en esta categorÃ­a"
               description="Genera el fixture (todos contra todos) o crea partidos manualmente."
               action={
                 <Button
                   type="button"
                   variant="default"
                   onClick={() => {
-                    if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                    if (requireFaseEspecifica('realizar esta acciÃƒÂ³n')) setFixtureOpen(true)
                   }}
                 >
                   Generar fixture
@@ -2141,7 +2399,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
                     <div>
                       <CardTitle className="text-lg">Jornada {jornada}</CardTitle>
-                      <CardDescription>{partidosJornada.length} partidos — solo emparejamientos</CardDescription>
+                      <CardDescription>{partidosJornada.length} partidos â€” solo emparejamientos</CardDescription>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button type="button" variant="outline" size="sm" onClick={() => openCrearPartidoEnJornada(jornada)}>
@@ -2222,8 +2480,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                               {(partido.programacionId && (partido.fecha || partido.hora || partido.cancha)) ? (
                                 <p className="mt-2 text-xs text-muted-foreground">
                                   {partido.fecha ? formatDate(partido.fecha) : ''}
-                                  {partido.hora ? ` · ${partido.hora}` : ''}
-                                  {partido.cancha ? ` · ${partido.cancha}` : ''}
+                                  {partido.hora ? ` Â· ${partido.hora}` : ''}
+                                  {partido.cancha ? ` Â· ${partido.cancha}` : ''}
                                 </p>
                               ) : null}
                               <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
@@ -2233,7 +2491,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   size="sm"
                                   onClick={() => openProgramacion(partido)}
                                 >
-                                  {partido.programacionId ? 'Editar programación' : 'Programar'}
+                                  {partido.programacionId ? 'Editar programaciÃ³n' : 'Programar'}
                                 </Button>
                                 <Button variant="ghost" size="sm" onClick={() => openEdit(partido)}>
                                   <Edit className="h-3 w-3" />
@@ -2268,14 +2526,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <CardHeader>
               <CardTitle>Sorteo de Horarios</CardTitle>
               <CardDescription>
-                Asigna fecha, cancha y hora a los partidos del fixture que aún no tienen programación. Elige la categoría,
-                genera una propuesta al azar, ajusta manualmente y guarda cuando esté listo.
+                Asigna fecha, cancha y hora a los partidos del fixture que aÃºn no tienen programaciÃ³n. Elige la categorÃ­a,
+                genera una propuesta al azar, ajusta manualmente y guarda cuando estÃ© listo.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-1">
-                  <Label>Categoría</Label>
+                  <Label>CategorÃ­a</Label>
                   <Select
                     value={sorteoCategoria}
                     onValueChange={(v) => {
@@ -2284,7 +2542,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     }}
                   >
                     <SelectTrigger className="w-full md:w-64">
-                      <SelectValue placeholder="Categoría" />
+                      <SelectValue placeholder="CategorÃ­a" />
                     </SelectTrigger>
                     <SelectContent>
                       {categorias.map((cat) => (
@@ -2300,7 +2558,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   <Input type="date" value={sorteoFecha} onChange={(e) => setSorteoFecha(e.target.value)} />
                 </div>
                 <div className="space-y-1">
-                  <Label>Días a explorar</Label>
+                  <Label>DÃ­as a explorar</Label>
                   <Input value={sorteoDias} onChange={(e) => setSorteoDias(e.target.value)} className="w-24" />
                 </div>
                 <Button type="button" disabled={pendientesSorteo.length === 0} onClick={() => llenarBorradorSorteo()}>
@@ -2313,7 +2571,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   disabled={guardandoSorteo || pendientesSorteo.length === 0}
                   onClick={() => void guardarBorradorSorteo()}
                 >
-                  {guardandoSorteo ? 'Guardando…' : 'Guardar programación'}
+                  {guardandoSorteo ? 'Guardandoâ€¦' : 'Guardar programaciÃ³n'}
                 </Button>
               </div>
 
@@ -2390,7 +2648,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 <EmptyState
                   icon={Calendar}
                   title="No hay partidos pendientes por programar"
-                  description="Primero crea el fixture en Por categoría."
+                  description="Primero crea el fixture en Por categorÃ­a."
                 />
               )}
             </CardContent>
@@ -2408,10 +2666,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <CardContent className="space-y-4">
               <div className="grid gap-3 md:grid-cols-3">
                 <div className="space-y-1">
-                  <Label>Categoría</Label>
+                  <Label>CategorÃ­a</Label>
                   <Select value={selectedCategoria} onValueChange={setSelectedCategoria}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Categoría" />
+                      <SelectValue placeholder="CategorÃ­a" />
                     </SelectTrigger>
                     <SelectContent>
                       {categorias.map((cat) => (
@@ -2456,7 +2714,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 <>
                   <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
                     <div className="space-y-1">
-                      <Label>Asignación de equipos</Label>
+                      <Label>AsignaciÃ³n de equipos</Label>
                       <Select value={grupoAsignacion} onValueChange={setGrupoAsignacion}>
                         <SelectTrigger>
                           <SelectValue />
@@ -2505,7 +2763,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   <CardTitle className="text-lg">{grupo.nombre}</CardTitle>
                                   <CardDescription>
                                     {equiposGrupo.length} equipos
-                                    {grupo.partidosJugados > 0 ? ` · ${grupo.partidosJugados} partidos jugados` : ''}
+                                    {grupo.partidosJugados > 0 ? ` Â· ${grupo.partidosJugados} partidos jugados` : ''}
                                   </CardDescription>
                                 </div>
                                 <Button
@@ -2532,7 +2790,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                             <CardContent className="space-y-3">
                               <div className="space-y-2">
                                 {equiposGrupo.length === 0 ? (
-                                  <p className="text-sm text-muted-foreground">Grupo vacío.</p>
+                                  <p className="text-sm text-muted-foreground">Grupo vacÃ­o.</p>
                                 ) : (
                                   equiposGrupo.map((item) => (
                                     <div key={item.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
@@ -2625,7 +2883,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <div>
                 <CardTitle>Fases del torneo</CardTitle>
                 <CardDescription>
-                  Usa la categoría elegida en «Por categoría». La fase activa orienta el fixture; los partidos manuales
+                  Usa la categorÃ­a elegida en Â«Por categorÃ­aÂ». La fase activa orienta el fixture; los partidos manuales
                   pueden asociarse a una fase.
                 </CardDescription>
               </div>
@@ -2652,12 +2910,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             </CardHeader>
             <CardContent>
               {!selectedCategoria ? (
-                <p className="text-sm text-muted-foreground">Selecciona una categoría en la pestaña «Por categoría».</p>
+                <p className="text-sm text-muted-foreground">Selecciona una categorÃ­a en la pestaÃ±a Â«Por categorÃ­aÂ».</p>
               ) : fasesList.length === 0 ? (
                 <EmptyState
                   icon={Layers}
                   title="Sin fases"
-                  description="Crea la primera fase eligiendo nombre y tipo (nada se crea automáticamente)."
+                  description="Crea la primera fase eligiendo nombre y tipo (nada se crea automÃ¡ticamente)."
                   action={
                     <Button type="button" onClick={() => setFaseDialogOpen(true)}>
                       <Plus className="mr-2 h-4 w-4" />
@@ -2688,7 +2946,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                         <TableCell>
                           {tiposFaseOptions().find((t) => t.value === f.tipo)?.label ?? f.tipo}
                         </TableCell>
-                        <TableCell>{f.reinicia_tabla ? 'Sí' : 'No (acumula)'}</TableCell>
+                        <TableCell>{f.reinicia_tabla ? 'SÃ­' : 'No (acumula)'}</TableCell>
                         <TableCell>
                           {f.activa ? <Badge>Activa</Badge> : <Badge variant="outline">Inactiva</Badge>}
                         </TableCell>
@@ -2733,7 +2991,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <EmptyState
               icon={Calendar}
               title="Sin partidos programados"
-              description="Aún no hay partidos programados. Primero crea el fixture y luego asigna horarios."
+              description="AÃºn no hay partidos programados. Primero crea el fixture y luego asigna horarios."
             />
           ) : (
             fechasOrdenadas.map((fecha) => {
@@ -2765,7 +3023,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Hora</TableHead>
-                          <TableHead>Categoría</TableHead>
+                          <TableHead>CategorÃ­a</TableHead>
                           <TableHead>Local</TableHead>
                           <TableHead className="text-center">Resultado</TableHead>
                           <TableHead>Visitante</TableHead>
@@ -2787,7 +3045,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 <TableCell className="font-medium">
                                   <div className="flex items-center gap-2">
                                     {isConflict && <AlertTriangle className="h-4 w-4 text-destructive" />}
-                                    {partido.hora || '—'}
+                                    {partido.hora || 'â€”'}
                                   </div>
                                 </TableCell>
                                 <TableCell>
@@ -2815,7 +3073,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   ) : played ? (
                                     <>
                                     <span className="font-bold">
-                                      {partido.golesLocal ?? '—'} - {partido.golesVisitante ?? '—'}
+                                      {partido.golesLocal ?? 'â€”'} - {partido.golesVisitante ?? 'â€”'}
                                     </span>
                                     {partido.definicion === 'walkover' || partido.resultadoNota ? (
                                       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -2839,7 +3097,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                   </div>
                                 </TableCell>
                                 <TableCell className={isConflict ? 'font-medium text-destructive' : ''}>
-                                  {partido.cancha || '—'}
+                                  {partido.cancha || 'â€”'}
                                 </TableCell>
                                 <TableCell>
                                   <Badge variant={played ? 'default' : 'secondary'}>
@@ -2849,7 +3107,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                                 <TableCell className="text-right">
                                   <div className="flex justify-end gap-2">
                                     <Button type="button" variant="outline" size="sm" onClick={() => openProgramacion(partido)}>
-                                      Editar programación
+                                      Editar programaciÃ³n
                                     </Button>
                                     <Button
                                       type="button"
@@ -2879,7 +3137,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nueva fase</DialogTitle>
-            <DialogDescription>En la categoría actualmente seleccionada en «Por categoría».</DialogDescription>
+            <DialogDescription>En la categorÃ­a actualmente seleccionada en Â«Por categorÃ­aÂ».</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="space-y-1">
@@ -2904,7 +3162,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
             <div className="flex items-center justify-between rounded-md border p-3">
               <div>
                 <p className="text-sm font-medium">Reinicia tabla de posiciones</p>
-                <p className="text-xs text-muted-foreground">Si está activo, las estadísticas de esta fase arrancan en cero.</p>
+                <p className="text-xs text-muted-foreground">Si estÃ¡ activo, las estadÃ­sticas de esta fase arrancan en cero.</p>
               </div>
               <Switch checked={faseReinicia} onCheckedChange={(v) => setFaseReinicia(v === true)} />
             </div>
@@ -2925,7 +3183,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           <DialogHeader>
             <DialogTitle>Eliminar fase</DialogTitle>
             <DialogDescription>
-              Esta acción solo afecta la fase seleccionada y sus partidos asociados dentro de esta categoría.
+              Esta acciÃ³n solo afecta la fase seleccionada y sus partidos asociados dentro de esta categorÃ­a.
             </DialogDescription>
           </DialogHeader>
           {deleteFaseTarget && (
@@ -2934,7 +3192,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <p>Partidos asociados: {deleteFaseTarget.summary.partidos}</p>
               {deleteFaseTarget.summary.tieneInformacionAsociada && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
-                  Esta fase tiene información asociada: {deleteFaseTarget.summary.jugados} jugados,{' '}
+                  Esta fase tiene informaciÃ³n asociada: {deleteFaseTarget.summary.jugados} jugados,{' '}
                   {deleteFaseTarget.summary.programaciones} programaciones, {deleteFaseTarget.summary.actas} actas,{' '}
                   {deleteFaseTarget.summary.goles} goles y {deleteFaseTarget.summary.tarjetas} tarjetas.
                 </div>
@@ -2962,7 +3220,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           <DialogHeader>
             <DialogTitle>Crear siguiente fase</DialogTitle>
             <DialogDescription>
-              Fase actual completada: {siguienteFaseQ.data?.faseActual?.nombre}. La nueva fase quedará activa.
+              Fase actual completada: {siguienteFaseQ.data?.faseActual?.nombre}. La nueva fase quedarÃ¡ activa.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
@@ -3007,7 +3265,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <div>
                 <p className="text-sm font-medium">Reinicia tabla</p>
                 <p className="text-xs text-muted-foreground">
-                  Sí: esta fase arranca en cero. No: acumula con fases anteriores según el orden.
+                  SÃ­: esta fase arranca en cero. No: acumula con fases anteriores segÃºn el orden.
                 </p>
               </div>
               <Switch checked={faseReinicia} onCheckedChange={(v) => setFaseReinicia(v === true)} />
@@ -3020,8 +3278,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="manual">Selección manual</SelectItem>
-                    <SelectItem value="clasificacion">Desde clasificación</SelectItem>
+                    <SelectItem value="manual">SelecciÃ³n manual</SelectItem>
+                    <SelectItem value="clasificacion">Desde clasificaciÃ³n</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -3049,9 +3307,9 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos los equipos</SelectItem>
-                  <SelectItem value="manual">Selección manual</SelectItem>
-                  <SelectItem value="clasificacion">Desde clasificación anterior</SelectItem>
-                  <SelectItem value="sin_equipos">Partidos sin equipos todavía</SelectItem>
+                  <SelectItem value="manual">SelecciÃ³n manual</SelectItem>
+                  <SelectItem value="clasificacion">Desde clasificaciÃ³n anterior</SelectItem>
+                  <SelectItem value="sin_equipos">Partidos sin equipos todavÃ­a</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -3105,10 +3363,10 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="primero_vs_ultimo">Primero vs último</SelectItem>
+                      <SelectItem value="primero_vs_ultimo">Primero vs Ãºltimo</SelectItem>
                       <SelectItem value="serpiente">Orden serpiente</SelectItem>
                       <SelectItem value="manual">Manual</SelectItem>
-                      <SelectItem value="sin_equipos">Sin equipos todavía</SelectItem>
+                      <SelectItem value="sin_equipos">Sin equipos todavÃ­a</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -3122,7 +3380,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              La selección y los cruces quedan preparados en la UI; guardar clasificados requiere persistencia adicional.
+              La selecciÃ³n y los cruces quedan preparados en la UI; guardar clasificados requiere persistencia adicional.
             </p>
           </div>
           <DialogFooter>

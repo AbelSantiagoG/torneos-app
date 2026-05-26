@@ -28,6 +28,8 @@ export type TablaPosicionRow = {
 }
 
 export type AjusteTablaPosicionesRow = {
+  torneo_id: string
+  categoria_id: string
   fase_torneo_id: string
   equipo_id: string
   ajuste_pj: number
@@ -129,6 +131,8 @@ export async function getAjusteTablaPosiciones(
   if (!r.data) return null
   const row = r.data as Record<string, unknown>
   return {
+    torneo_id: pickStr(row, 'torneo_id'),
+    categoria_id: pickStr(row, 'categoria_id'),
     fase_torneo_id: faseTorneoId,
     equipo_id: equipoId,
     ajuste_pj: num(row, 'ajuste_pj'),
@@ -149,7 +153,7 @@ export function calcularAjustesDesdeValoresFinales(
     TablaPosicionRow,
     'pj_base' | 'pg_base' | 'pe_base' | 'pp_base' | 'gf_base' | 'gc_base' | 'pts_base' | 'fair_play_base'
   >,
-): Omit<AjusteTablaPosicionesRow, 'fase_torneo_id' | 'equipo_id' | 'observaciones'> {
+): Omit<AjusteTablaPosicionesRow, 'torneo_id' | 'categoria_id' | 'fase_torneo_id' | 'equipo_id' | 'observaciones'> {
   return {
     ajuste_pj: final.pj - base.pj_base,
     ajuste_pg: final.pg - base.pg_base,
@@ -164,6 +168,8 @@ export function calcularAjustesDesdeValoresFinales(
 
 export async function upsertAjusteTablaPosiciones(input: AjusteTablaPosicionesRow): Promise<void> {
   const payload = {
+    torneo_id: input.torneo_id,
+    categoria_id: input.categoria_id,
     fase_torneo_id: input.fase_torneo_id,
     equipo_id: input.equipo_id,
     ajuste_pj: input.ajuste_pj,
