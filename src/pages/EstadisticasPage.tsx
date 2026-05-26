@@ -233,12 +233,12 @@ export function EstadisticasPage() {
 
   const goleadores = statsQ.data?.goleadores ?? []
   const disciplina = statsQ.data?.disciplina ?? []
-  const tabla = aplicarFairplayPorDisciplina(statsQ.data?.tabla ?? [], disciplina)
+  const tabla = statsQ.data?.tabla ?? []
   const tablasPorGrupo = tablasGrupoQ.data ?? []
   const equiposPorGrupo = grupoEquiposQ.data ?? []
 
   const rowsGrupoConFallback = (grupoId: string, rows: VistaRow[]): VistaRow[] => {
-    if (rows.length) return aplicarFairplayPorDisciplina(rows, disciplina)
+    if (rows.length) return rows
     return equiposPorGrupo
       .filter((item) => item.grupoId === grupoId)
       .map((item) => {

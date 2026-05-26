@@ -336,15 +336,10 @@ export async function fetchEstadisticasFiltradas(
     return { tabla, goleadores, disciplina }
   }
 
-  const partidoIdsAcumulados = await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId)
-
   tabla = await fetchTablaPosicionesFaseGrupo(faseTorneoId, null)
-  if (!tabla.length) {
-    tabla = filterVistaRowsPorFase(filterVistaRowsPorCategoria(base.tabla, categoriaId), faseTorneoId)
-  }
   tabla = await enrichTablaConLogos(tabla, categoriaId)
-  tabla = await recalcularTablaDesdeResultados(tabla, faseTorneoId, null, partidoIdsAcumulados)
 
+  const partidoIdsAcumulados = await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId)
   const partidoIds = new Set(partidoIdsAcumulados)
   if (partidoIds.size) {
     goleadores = filterRowsPorPartidos(goleadores, partidoIds)
@@ -369,8 +364,7 @@ export async function fetchTablaPosicionesFaseGrupo(
   for (const args of variants) {
     const r = await supabase.rpc('obtener_tabla_posiciones_fase_grupo', args)
     if (!r.error && r.data) {
-      const rows = await enrichTablaConLogos((Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[])
-      return recalcularTablaDesdeResultados(rows, faseTorneoId, grupoId)
+      return enrichTablaConLogos((Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[])
     }
     if (r.error) {
       console.error('Error en estadÃ­sticas', {

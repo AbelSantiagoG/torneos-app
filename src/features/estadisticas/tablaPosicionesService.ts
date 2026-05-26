@@ -168,23 +168,21 @@ export function calcularAjustesDesdeValoresFinales(
 
 export async function upsertAjusteTablaPosiciones(input: AjusteTablaPosicionesRow): Promise<void> {
   const payload = {
-    torneo_id: input.torneo_id,
-    categoria_id: input.categoria_id,
-    fase_torneo_id: input.fase_torneo_id,
-    equipo_id: input.equipo_id,
-    ajuste_pj: input.ajuste_pj,
-    ajuste_pg: input.ajuste_pg,
-    ajuste_pe: input.ajuste_pe,
-    ajuste_pp: input.ajuste_pp,
-    ajuste_gf: input.ajuste_gf,
-    ajuste_gc: input.ajuste_gc,
-    ajuste_pts: input.ajuste_pts,
-    ajuste_fairplay: input.ajuste_fairplay,
-    observaciones: input.observaciones?.trim() || null,
+    p_torneo_id: input.torneo_id,
+    p_categoria_id: input.categoria_id,
+    p_fase_torneo_id: input.fase_torneo_id,
+    p_equipo_id: input.equipo_id,
+    p_ajuste_pj: input.ajuste_pj,
+    p_ajuste_pg: input.ajuste_pg,
+    p_ajuste_pe: input.ajuste_pe,
+    p_ajuste_pp: input.ajuste_pp,
+    p_ajuste_gf: input.ajuste_gf,
+    p_ajuste_gc: input.ajuste_gc,
+    p_ajuste_pts: input.ajuste_pts,
+    p_ajuste_fairplay: input.ajuste_fairplay,
+    p_observaciones: input.observaciones?.trim() || null,
   }
-  const r = await supabase.from('ajustes_tabla_posiciones').upsert(payload, {
-    onConflict: 'fase_torneo_id,equipo_id',
-  })
+  const r = await supabase.rpc('guardar_ajuste_tabla_posicion', payload)
   if (r.error) {
     console.error('Error en estadísticas', { payload, error: r.error })
     throw toUserError(r.error, 'programacion')

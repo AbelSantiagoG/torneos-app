@@ -142,11 +142,11 @@ export async function guardarFaseConfiguracion(input: {
   })
   if (!upsert.error) return
 
+  const insert = await supabase.from('fase_configuracion').insert(payload)
+  if (!insert.error) return
+
   const update = await supabase.from('fase_configuracion').update(payload).eq('fase_torneo_id', input.faseTorneoId)
   if (!update.error) return
 
-  const insert = await supabase.from('fase_configuracion').insert(payload)
-  if (insert.error) {
-    console.error('No se pudo guardar configuración de fase', { payload, error: insert.error })
-  }
+  console.error('No se pudo guardar configuración de fase', { payload, error: update.error })
 }

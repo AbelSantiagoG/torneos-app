@@ -21,8 +21,8 @@ type PartidoRowDb = {
   orden: number | null
   fecha_fixture: string | null
   estado: string
-  equipo_local_id: string
-  equipo_visitante_id: string
+  equipo_local_id: string | null
+  equipo_visitante_id: string | null
   fase_torneo_id?: string | null
   grupo_id?: string | null
 }
@@ -36,6 +36,24 @@ type PartidoResultadoRow = {
   definicion?: string | null
   equipo_ganador_id?: string | null
   equipo_no_presentado_id?: string | null
+}
+
+export type LlaveEliminatoriaUi = {
+  id: string
+  faseTorneoId: string
+  rondaNombre: string
+  partidoId: string | null
+  partidoVueltaId: string | null
+  equipoLocalId: string | null
+  equipoVisitanteId: string | null
+  equipoLocalNombre: string
+  equipoVisitanteNombre: string
+  equipoLocalLogoUrl: string | null
+  equipoVisitanteLogoUrl: string | null
+  equipoLocalLogoPublicId: string | null
+  equipoVisitanteLogoPublicId: string | null
+  estado: string
+  createdAt: string
 }
 
 const DUPLICATE_MATCH_MSG = 'Este partido ya existe en otra jornada. Solo puede repetirse si el torneo es de ida y vuelta.'
@@ -74,6 +92,7 @@ async function assertPartidoFixtureValido(input: {
   const duplicate = rows.some((row) => {
     if (input.excluirPartidoId && row.id === input.excluirPartidoId) return false
     if (!sameFixtureFase(row.fase_torneo_id, input.fase_torneo_id)) return false
+    if (!row.equipo_local_id || !row.equipo_visitante_id) return false
     return sameUnorderedMatch(input.equipo_local_id, input.equipo_visitante_id, row.equipo_local_id, row.equipo_visitante_id)
   })
   if (duplicate) throw new Error(DUPLICATE_MATCH_MSG)
@@ -113,13 +132,15 @@ export async function listPartidosFixtureTorneo(
   const catIds = [...new Set(rows.map((x) => x.categoria_id))]
   const teamIds = new Set<string>()
   for (const x of rows) {
-    teamIds.add(x.equipo_local_id)
-    teamIds.add(x.equipo_visitante_id)
+    if (x.equipo_local_id) teamIds.add(x.equipo_local_id)
+    if (x.equipo_visitante_id) teamIds.add(x.equipo_visitante_id)
   }
 
   const [cats, teams] = await Promise.all([
     supabase.from('categorias').select('id, nombre, color').in('id', catIds),
-    supabase.from('equipos').select('id, nombre, logo_url, logo_public_id, color').in('id', [...teamIds]),
+    teamIds.size
+      ? supabase.from('equipos').select('id, nombre, logo_url, logo_public_id, color').in('id', [...teamIds])
+      : Promise.resolve({ data: [], error: null }),
   ])
 
   const catMap = new Map(
@@ -139,8 +160,8 @@ export async function listPartidosFixtureTorneo(
 
   return rows.map((x) => {
     const cat = catMap.get(x.categoria_id)
-    const tl = teamMap.get(x.equipo_local_id)
-    const tv = teamMap.get(x.equipo_visitante_id)
+    const tl = x.equipo_local_id ? teamMap.get(x.equipo_local_id) : null
+    const tv = x.equipo_visitante_id ? teamMap.get(x.equipo_visitante_id) : null
     return {
       id: x.id,
       fecha: x.fecha_fixture ?? '',
@@ -160,13 +181,68 @@ export async function listPartidosFixtureTorneo(
       equipoVisitanteLogoPublicId: tv?.logo_public_id ?? null,
       golesLocal: null,
       golesVisitante: null,
-      equipoLocalId: x.equipo_local_id,
-      equipoVisitanteId: x.equipo_visitante_id,
+      equipoLocalId: x.equipo_local_id ?? '',
+      equipoVisitanteId: x.equipo_visitante_id ?? '',
       jornada: x.jornada ?? 0,
       orden: x.orden ?? 0,
       programacionId: null,
       faseTorneoId: x.fase_torneo_id ?? null,
       grupoId: x.grupo_id ?? null,
+    }
+  })
+}
+
+export async function listLlavesEliminatoriaFase(faseTorneoId: string): Promise<LlaveEliminatoriaUi[]> {
+  if (!faseTorneoId) return []
+  const r = await supabase
+    .from('llaves_eliminatoria')
+    .select('id, fase_torneo_id, ronda_nombre, partido_id, partido_vuelta_id, equipo_local_id, equipo_visitante_id, estado, created_at')
+    .eq('fase_torneo_id', faseTorneoId)
+    .order('created_at', { ascending: true })
+
+  if (r.error) throw toUserError(r.error, 'fixture')
+  const rows = (r.data ?? []) as Record<string, unknown>[]
+  if (!rows.length) return []
+
+  const teamIds = [
+    ...new Set(
+      rows
+        .flatMap((row) => [pickStr(row, 'equipo_local_id'), pickStr(row, 'equipo_visitante_id')])
+        .filter(Boolean),
+    ),
+  ]
+  const teams = teamIds.length
+    ? await supabase.from('equipos').select('id, nombre, logo_url, logo_public_id').in('id', teamIds)
+    : { data: [], error: null }
+  if (teams.error) throw toUserError(teams.error, 'fixture')
+  const teamMap = new Map(
+    ((teams.data ?? []) as { id: string; nombre: string; logo_url: string | null; logo_public_id: string | null }[]).map((team) => [
+      team.id,
+      team,
+    ]),
+  )
+
+  return rows.map((row) => {
+    const localId = pickStr(row, 'equipo_local_id') || null
+    const visitanteId = pickStr(row, 'equipo_visitante_id') || null
+    const local = localId ? teamMap.get(localId) : null
+    const visitante = visitanteId ? teamMap.get(visitanteId) : null
+    return {
+      id: pickStr(row, 'id'),
+      faseTorneoId: pickStr(row, 'fase_torneo_id'),
+      rondaNombre: pickStr(row, 'ronda_nombre') || 'Eliminatoria',
+      partidoId: pickStr(row, 'partido_id') || null,
+      partidoVueltaId: pickStr(row, 'partido_vuelta_id') || null,
+      equipoLocalId: localId,
+      equipoVisitanteId: visitanteId,
+      equipoLocalNombre: local?.nombre ?? 'Por definir',
+      equipoVisitanteNombre: visitante?.nombre ?? 'Por definir',
+      equipoLocalLogoUrl: local?.logo_url ?? null,
+      equipoVisitanteLogoUrl: visitante?.logo_url ?? null,
+      equipoLocalLogoPublicId: local?.logo_public_id ?? null,
+      equipoVisitanteLogoPublicId: visitante?.logo_public_id ?? null,
+      estado: pickStr(row, 'estado') || 'pendiente',
+      createdAt: pickStr(row, 'created_at'),
     }
   })
 }
@@ -254,12 +330,14 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
   const catIds = [...new Set(partRows.map((pr) => pr.categoria_id))]
   const teamIds = new Set<string>()
   for (const pr of partRows) {
-    teamIds.add(pr.equipo_local_id)
-    teamIds.add(pr.equipo_visitante_id)
+    if (pr.equipo_local_id) teamIds.add(pr.equipo_local_id)
+    if (pr.equipo_visitante_id) teamIds.add(pr.equipo_visitante_id)
   }
   const [cats, teams] = await Promise.all([
     supabase.from('categorias').select('id, nombre, color').in('id', catIds),
-    supabase.from('equipos').select('id, nombre, logo_url, logo_public_id, color').in('id', [...teamIds]),
+    teamIds.size
+      ? supabase.from('equipos').select('id, nombre, logo_url, logo_public_id, color').in('id', [...teamIds])
+      : Promise.resolve({ data: [], error: null }),
   ])
   const catMap = new Map(
     (throwOnError(cats) as { id: string; nombre: string; color: string | null }[]).map((c) => [c.id, c]),
@@ -282,8 +360,8 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
     const pr = partMap.get(partidoId)
     if (!pr) continue
     const cat = catMap.get(pr.categoria_id)
-    const tl = teamMap.get(pr.equipo_local_id)
-    const tv = teamMap.get(pr.equipo_visitante_id)
+    const tl = pr.equipo_local_id ? teamMap.get(pr.equipo_local_id) : null
+    const tv = pr.equipo_visitante_id ? teamMap.get(pr.equipo_visitante_id) : null
     const fecha = String(r.fecha ?? '').slice(0, 10)
     const hi = String(r.hora_inicio ?? '')
     const hf = String(r.hora_fin ?? '')
@@ -310,8 +388,8 @@ export async function listPartidosProgramadosTorneo(torneoId: string): Promise<P
       equipoVisitanteLogoPublicId: tv?.logo_public_id ?? null,
       golesLocal: null,
       golesVisitante: null,
-      equipoLocalId: pr.equipo_local_id,
-      equipoVisitanteId: pr.equipo_visitante_id,
+      equipoLocalId: pr.equipo_local_id ?? '',
+      equipoVisitanteId: pr.equipo_visitante_id ?? '',
       jornada: pr.jornada ?? 0,
       orden: pr.orden ?? 0,
       observaciones,
@@ -572,10 +650,15 @@ export async function updatePartido(partidoId: string, patch: PartidoFixturePatc
     .single()
   if (currentRes.error) throw toUserError(currentRes.error, 'fixture')
   const current = currentRes.data as PartidoRowDb
+  const equipoLocalId = patch.equipo_local_id ?? current.equipo_local_id
+  const equipoVisitanteId = patch.equipo_visitante_id ?? current.equipo_visitante_id
+  if (!equipoLocalId || !equipoVisitanteId) {
+    throw new Error('Selecciona equipos local y visitante distintos.')
+  }
   await assertPartidoFixtureValido({
     categoria_id: current.categoria_id,
-    equipo_local_id: patch.equipo_local_id ?? current.equipo_local_id,
-    equipo_visitante_id: patch.equipo_visitante_id ?? current.equipo_visitante_id,
+    equipo_local_id: equipoLocalId,
+    equipo_visitante_id: equipoVisitanteId,
     fase_torneo_id: current.fase_torneo_id ?? null,
     excluirPartidoId: partidoId,
   })

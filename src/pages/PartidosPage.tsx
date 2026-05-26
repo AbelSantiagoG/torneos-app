@@ -67,6 +67,8 @@ import {
   upsertProgramacion,
   generarBorradorSorteo,
   type PartidosTorneoBundle,
+  listLlavesEliminatoriaFase,
+  type LlaveEliminatoriaUi,
   type SorteoBorradorSlot,
 } from '@/features/partidos/partidosService'
 import type { PartidoListaUi } from '@/features/partidos/partidosService'
@@ -195,6 +197,93 @@ function ResultadoPartido({ partido, played }: { partido: PartidoListaUi; played
         </p>
       ) : null}
     </div>
+  )
+}
+
+const RONDA_ORDEN: Record<string, number> = {
+  'treintaidosavos': 1,
+  'dieciseisavos': 2,
+  'octavos': 3,
+  'octavos de final': 3,
+  'cuartos': 4,
+  'cuartos de final': 4,
+  'semifinal': 5,
+  'semifinales': 5,
+  'final': 6,
+}
+
+function ordenRonda(nombre: string): number {
+  const key = nombre.trim().toLowerCase()
+  return RONDA_ORDEN[key] ?? 99
+}
+
+function BracketEliminatoria({ llaves }: { llaves: LlaveEliminatoriaUi[] }) {
+  const rondas = useMemo(() => {
+    const map = new Map<string, LlaveEliminatoriaUi[]>()
+    for (const llave of llaves) {
+      map.set(llave.rondaNombre, [...(map.get(llave.rondaNombre) ?? []), llave])
+    }
+    return [...map.entries()]
+      .map(([nombre, items]) => ({
+        nombre,
+        items: items.sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+      }))
+      .sort((a, b) => ordenRonda(a.nombre) - ordenRonda(b.nombre) || a.nombre.localeCompare(b.nombre))
+  }, [llaves])
+
+  if (!llaves.length) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Llaves de eliminación directa</CardTitle>
+        <CardDescription>Vista de cruces generados para esta fase.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto pb-2">
+          <div className="grid min-w-[760px] auto-cols-[minmax(220px,1fr)] grid-flow-col gap-6">
+            {rondas.map((ronda) => (
+              <div key={ronda.nombre} className="space-y-4">
+                <h3 className="text-center text-sm font-semibold">{ronda.nombre}</h3>
+                <div className="space-y-4">
+                  {ronda.items.map((llave, idx) => (
+                    <div key={llave.id} className="rounded-md border bg-card p-3 shadow-sm">
+                      <p className="mb-2 text-xs font-medium text-muted-foreground">
+                        {ronda.nombre} #{idx + 1}
+                      </p>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 rounded-md bg-muted/30 p-2">
+                          <TeamAvatar
+                            nombre={llave.equipoLocalNombre}
+                            color="#16a34a"
+                            logoUrl={llave.equipoLocalLogoUrl}
+                            logoPublicId={llave.equipoLocalLogoPublicId}
+                          />
+                          <span className="min-w-0 truncate text-sm font-medium">{llave.equipoLocalNombre}</span>
+                        </div>
+                        <div className="flex items-center justify-center text-muted-foreground">vs</div>
+                        <div className="flex items-center gap-2 rounded-md bg-muted/30 p-2">
+                          <TeamAvatar
+                            nombre={llave.equipoVisitanteNombre}
+                            color="#64748b"
+                            logoUrl={llave.equipoVisitanteLogoUrl}
+                            logoPublicId={llave.equipoVisitanteLogoPublicId}
+                          />
+                          <span className="min-w-0 truncate text-sm font-medium">{llave.equipoVisitanteNombre}</span>
+                        </div>
+                      </div>
+                      {llave.partidoVueltaId && (
+                        <p className="mt-2 text-xs text-muted-foreground">Ida y vuelta</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -332,9 +421,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }, [fasesList, selectedFixtureFase])
 
   const fixtureEsPorGrupos = isFasePorGrupos(faseActualFixture?.tipo)
+  const fixtureEsEliminatoria = String(faseActualFixture?.tipo ?? '') === 'eliminatoria_directa'
   const gruposFaseQueryKey = ['grupos-fase', faseActualFixture?.id] as const
   const grupoEquiposQueryKey = ['grupo-equipos', faseActualFixture?.id] as const
   const fixtureGruposQueryKey = ['fixture-grupos', faseActualFixture?.id] as const
+  const llavesEliminatoriaQueryKey = ['llaves-eliminatoria', faseActualFixture?.id] as const
 
   const {
     data: gruposFase = [],
@@ -352,11 +443,27 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     queryFn: () => listGrupoEquipos(faseActualFixture!.id),
   })
 
+  const mostrarTabGrupos =
+    String(faseActualFixture?.tipo ?? '') === 'fase_grupos' || (fixtureEsPorGrupos && gruposFase.length > 0)
+  const cuadrangularSinGrupos = String(faseActualFixture?.tipo ?? '') === 'cuadrangulares' && gruposFase.length === 0
+
   const { data: fixtureGrupos = [], refetch: refetchFixtureGrupos } = useQuery<FixtureGrupoUi[]>({
     queryKey: fixtureGruposQueryKey,
     enabled: Boolean(faseActualFixture?.id && fixtureEsPorGrupos),
     queryFn: () => listFixtureGruposFase(faseActualFixture!.id),
   })
+
+  const { data: llavesEliminatoria = [], refetch: refetchLlavesEliminatoria } = useQuery<LlaveEliminatoriaUi[]>({
+    queryKey: llavesEliminatoriaQueryKey,
+    enabled: Boolean(faseActualFixture?.id && fixtureEsEliminatoria),
+    queryFn: () => listLlavesEliminatoriaFase(faseActualFixture!.id),
+  })
+
+  useEffect(() => {
+    if (activeTab === 'grupos' && !mostrarTabGrupos) {
+      setActiveTab('categoria')
+    }
+  }, [activeTab, mostrarTabGrupos])
 
   const partidosCategoria = useMemo(
     () =>
@@ -579,7 +686,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }
 
   const invalidatePartidos = () => {
-    if (torneoId) void qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
+    if (!torneoId) return Promise.resolve()
+    return qc.invalidateQueries({ queryKey: partidosTorneoQueryKey(torneoId) })
   }
 
   const updatePartidosCache = (updater: (old: PartidosTorneoBundle) => PartidosTorneoBundle) => {
@@ -1232,7 +1340,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           })
           toast.success('Llaves de eliminatoria creadas.')
           setFixtureOpen(false)
-          invalidatePartidos()
+          await invalidatePartidos()
+          void refetchLlavesEliminatoria()
           return
         }
         if (clasificadosModo === 'todos') {
@@ -1274,7 +1383,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
       toast.success('Fixture generado.')
       setFixtureOpen(false)
-      invalidatePartidos()
+      await invalidatePartidos()
+      if (tipoFase === 'eliminatoria_directa') void refetchLlavesEliminatoria()
     } catch (e) {
       toast.error(translateUserError(e, 'fixture'))
     } finally {
@@ -2128,11 +2238,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       </Dialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 lg:inline-flex lg:w-auto">
+        <TabsList className={`grid w-full grid-cols-2 ${mostrarTabGrupos ? 'sm:grid-cols-5' : 'sm:grid-cols-4'} lg:inline-flex lg:w-auto`}>
           <TabsTrigger value="categoria">Por CategorÃ­a</TabsTrigger>
           <TabsTrigger value="sorteo">Sorteo de Horarios</TabsTrigger>
           <TabsTrigger value="fecha">Por Fecha</TabsTrigger>
-          <TabsTrigger value="grupos">Grupos</TabsTrigger>
+          {mostrarTabGrupos && <TabsTrigger value="grupos">Grupos</TabsTrigger>}
           <TabsTrigger value="fases" className="gap-1">
             <Layers className="h-4 w-4" />
             Fases
@@ -2225,12 +2335,17 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               )}
               {fixtureEsPorGrupos && (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  Esta fase genera fixture todos contra todos dentro de cada grupo. Si faltan grupos o equipos asignados,
-                  usa la pestaÃ±a Grupos antes de generar.
+                  {cuadrangularSinGrupos
+                    ? 'Esta fase creará los cuadrangulares al generar el fixture desde la fase anterior.'
+                    : 'Esta fase genera fixture todos contra todos dentro de cada grupo. Si faltan grupos o equipos asignados, usa la pestaña Grupos antes de generar.'}
                 </p>
               )}
             </CardContent>
           </Card>
+
+          {fixtureEsEliminatoria && llavesEliminatoria.length > 0 && (
+            <BracketEliminatoria llaves={llavesEliminatoria} />
+          )}
 
           {parLoading || (fixtureEsPorGrupos && gruposLoading) ? (
             <Skeleton className="h-64 w-full" />
@@ -2245,7 +2360,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     : 'Primero crea los grupos y asigna equipos a esta fase.'
                 }
                 action={
-                  gruposConEquiposAsignados ? (
+                  gruposConEquiposAsignados || cuadrangularSinGrupos ? (
                     <Button
                       type="button"
                       variant="default"
@@ -2253,7 +2368,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                         if (requireFaseEspecifica('realizar esta acciÃƒÂ³n')) setFixtureOpen(true)
                       }}
                     >
-                      Generar fixture por grupos
+                      {cuadrangularSinGrupos ? 'Generar cuadrangulares' : 'Generar fixture por grupos'}
                     </Button>
                   ) : (
                     <Button type="button" variant="default" onClick={() => setActiveTab('grupos')}>
