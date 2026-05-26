@@ -24,9 +24,6 @@ const TIPOS_FASE: { value: TipoFaseTorneoDb; label: string }[] = [
   { value: 'fase_grupos', label: 'Fase de grupos' },
   { value: 'cuadrangulares', label: 'Cuadrangulares' },
   { value: 'eliminatoria_directa', label: 'Eliminatoria directa' },
-  { value: 'final', label: 'Final' },
-  { value: 'tercer_puesto', label: 'Tercer puesto' },
-  { value: 'amistoso', label: 'Amistoso' },
 ]
 
 export function tiposFaseOptions() {

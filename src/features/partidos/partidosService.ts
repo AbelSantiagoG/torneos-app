@@ -456,6 +456,79 @@ export async function generarFixtureCategoria(categoriaId: string, _fechaInicioL
   throw toUserError(last, 'fixture')
 }
 
+function buildRoundRobinRows(params: {
+  torneoId: string
+  categoriaId: string
+  faseTorneoId: string
+  equipoIds: string[]
+  idaVuelta?: boolean
+}) {
+  const teams = [...new Set(params.equipoIds.filter(Boolean))]
+  if (teams.length < 2) {
+    throw new Error('No se puede generar fixture sin equipos de fase.')
+  }
+
+  const hasBye = teams.length % 2 === 1
+  const pool = hasBye ? [...teams, '__bye__'] : teams
+  const rounds = pool.length - 1
+  const half = pool.length / 2
+  const jornadas: { local: string; visitante: string; jornada: number; orden: number }[] = []
+
+  let rotating = [...pool]
+  for (let round = 0; round < rounds; round++) {
+    let orden = 0
+    for (let i = 0; i < half; i++) {
+      const a = rotating[i]!
+      const b = rotating[rotating.length - 1 - i]!
+      if (a === '__bye__' || b === '__bye__') continue
+      const invert = round % 2 === 1
+      jornadas.push({
+        local: invert ? b : a,
+        visitante: invert ? a : b,
+        jornada: round + 1,
+        orden,
+      })
+      orden += 1
+    }
+    rotating = [rotating[0]!, rotating[rotating.length - 1]!, ...rotating.slice(1, -1)]
+  }
+
+  const vuelta = params.idaVuelta
+    ? jornadas.map((row) => ({
+        local: row.visitante,
+        visitante: row.local,
+        jornada: row.jornada + rounds,
+        orden: row.orden,
+      }))
+    : []
+
+  return [...jornadas, ...vuelta].map((row) => ({
+    torneo_id: params.torneoId,
+    categoria_id: params.categoriaId,
+    fase_torneo_id: params.faseTorneoId,
+    equipo_local_id: row.local,
+    equipo_visitante_id: row.visitante,
+    jornada: row.jornada,
+    orden: row.orden,
+    estado: 'pendiente_programar',
+    fase: 'regular',
+    fecha_fixture: null,
+    grupo_id: null,
+  }))
+}
+
+export async function generarFixtureTodosContraTodosFase(params: {
+  torneoId: string
+  categoriaId: string
+  faseTorneoId: string
+  equipoIds: string[]
+  idaVuelta?: boolean
+}): Promise<void> {
+  const rows = buildRoundRobinRows(params)
+  const r = await supabase.from('partidos').insert(rows)
+  if (r.error) throw toUserError(r.error, 'fixture')
+}
+
 export async function eliminarPartidoFixtureSeguro(partidoId: string, forzar = false): Promise<void> {
   const { error } = await supabase.rpc('eliminar_partido_fixture_seguro', {
     p_partido_id: partidoId,

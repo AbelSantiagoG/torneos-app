@@ -54,6 +54,7 @@ import {
   countPartidosEnCategoria,
   countPartidosEnFase,
   generarFixtureCategoria,
+  generarFixtureTodosContraTodosFase,
   eliminarFixtureFaseSeguro,
   eliminarJornadaFixtureSeguro,
   eliminarPartidoFixtureSeguro,
@@ -86,6 +87,11 @@ import {
   type FaseDeleteSummary,
   type FaseTorneoUi,
 } from '@/features/fases/fasesTorneoService'
+import {
+  isMissingFaseEquipos,
+  listFaseEquipos,
+  replaceFaseEquipos,
+} from '@/features/fases/faseEquiposService'
 import {
   agregarEquipoAGrupo,
   agregarEquiposRestantesAGrupo,
@@ -242,6 +248,13 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   const [grupoMoverDraft, setGrupoMoverDraft] = useState<Record<string, string>>({})
   const [clasificadosModo, setClasificadosModo] = useState('manual')
   const [clasificadosCriterio, setClasificadosCriterio] = useState('primeros_y_segundos')
+  const [faseOrigenId, setFaseOrigenId] = useState('')
+  const [faseClasificadosTotal, setFaseClasificadosTotal] = useState('8')
+  const [faseClasificadosPorGrupo, setFaseClasificadosPorGrupo] = useState('2')
+  const [faseCuadrangularesCantidad, setFaseCuadrangularesCantidad] = useState('2')
+  const [faseModalidad, setFaseModalidad] = useState('solo_ida')
+  const [faseCruces, setFaseCruces] = useState('primero_vs_ultimo')
+  const [faseTercerPuesto, setFaseTercerPuesto] = useState(false)
   const [deleteFaseTarget, setDeleteFaseTarget] = useState<{
     fase: FaseTorneoUi
     summary: FaseDeleteSummary
@@ -614,6 +627,42 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setFaseOrden('')
     setFaseDescripcion('')
     setFaseReinicia(false)
+    setClasificadosModo('manual')
+    setClasificadosCriterio('primeros_y_segundos')
+    setFaseOrigenId('')
+    setFaseClasificadosTotal('8')
+    setFaseClasificadosPorGrupo('2')
+    setFaseCuadrangularesCantidad('2')
+    setFaseModalidad('solo_ida')
+    setFaseCruces('primero_vs_ultimo')
+    setFaseTercerPuesto(false)
+  }
+
+  const faseOrigenSeleccionada = () =>
+    fasesList.find((fase) => fase.id === faseOrigenId) ?? siguienteFaseQ.data?.faseActual ?? fasesList[fasesList.length - 1] ?? null
+
+  const isCantidadEliminatoriaValida = (value: number) => [2, 4, 8, 16, 32].includes(value)
+
+  const buildFaseDescripcion = (esSiguiente: boolean) => {
+    const partes = [faseDescripcion.trim()].filter(Boolean)
+    if (!esSiguiente) return partes.join('\n') || null
+    const origen = faseOrigenSeleccionada()
+    partes.push(
+      [
+        'Configuración siguiente fase:',
+        `origen=${origen?.nombre ?? 'sin fase origen'}`,
+        `fuente=${clasificadosModo}`,
+        `criterio=${clasificadosCriterio}`,
+        `reinicia_tabla=${faseReinicia ? 'si' : 'no'}`,
+        `clasificados_total=${faseClasificadosTotal}`,
+        `clasificados_por_grupo=${faseClasificadosPorGrupo}`,
+        `cuadrangulares=${faseCuadrangularesCantidad}`,
+        `modalidad=${faseModalidad}`,
+        `cruces=${faseCruces}`,
+        `tercer_puesto=${faseTercerPuesto ? 'si' : 'no'}`,
+      ].join(' | '),
+    )
+    return partes.join('\n')
   }
 
   const openCrearJornada = () => {
@@ -735,17 +784,68 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       toast.error('Elige el tipo de fase.')
       return
     }
+    const origen = esSiguiente ? faseOrigenSeleccionada() : null
+    if (esSiguiente && !origen) {
+      toast.error('Selecciona la fase anterior de referencia.')
+      return
+    }
+    if (esSiguiente && faseTipo === 'todos_contra_todos' && clasificadosModo === 'clasificacion') {
+      toast.error('Todos contra todos como siguiente fase debe configurarse con selección manual, todos los equipos o sin equipos.')
+      return
+    }
+    if (esSiguiente && faseTipo === 'eliminatoria_directa' && clasificadosModo !== 'sin_equipos') {
+      const cantidad = Number(faseClasificadosTotal)
+      if (!isCantidadEliminatoriaValida(cantidad)) {
+        toast.error('La eliminación directa solo permite 2, 4, 8, 16 o 32 clasificados.')
+        return
+      }
+      if (clasificadosModo === 'todos' && cantidad > equiposCat.length) {
+        toast.error('No puedes clasificar más equipos de los existentes.')
+        return
+      }
+    }
+    if (esSiguiente && faseTipo === 'cuadrangulares') {
+      const cantidad = Number(faseCuadrangularesCantidad)
+      if (!Number.isInteger(cantidad) || cantidad < 1) {
+        toast.error('Indica cuántos cuadrangulares quieres crear.')
+        return
+      }
+      if (clasificadosModo === 'clasificacion' && origen && isFasePorGrupos(origen.tipo)) {
+        const gruposOrigen = await listGruposFase(origen.id)
+        if (gruposOrigen.length > 8) {
+          toast.error('No se puede crear cuadrangulares automáticamente si la fase anterior tiene más de 8 grupos.')
+          return
+        }
+      }
+    }
     try {
-      await createFaseTorneo({
+      const faseId = await createFaseTorneo({
         torneo_id: torneoId,
         categoria_id: selectedCategoria,
         nombre: faseNombre.trim(),
         tipo: faseTipo,
         orden: faseOrden.trim() ? Number(faseOrden) : undefined,
-        descripcion: faseDescripcion.trim() || null,
+        descripcion: buildFaseDescripcion(esSiguiente),
         reinicia_tabla: faseReinicia,
         activa: esSiguiente ? true : undefined,
+        fase_origen_id: esSiguiente ? origen?.id ?? null : null,
       })
+      if (esSiguiente && clasificadosModo === 'todos') {
+        try {
+          await replaceFaseEquipos({
+            faseTorneoId: faseId,
+            equipoIds: equiposCat.map((equipo) => equipo.id),
+            metodo: 'todos',
+            origenFaseId: origen?.id ?? null,
+          })
+        } catch (err) {
+          if (isMissingFaseEquipos(err)) {
+            toast.warning('Fase creada. Para guardar equipos participantes falta aplicar la migración fase_equipos.')
+          } else {
+            throw err
+          }
+        }
+      }
       toast.success(esSiguiente ? 'Siguiente fase creada.' : 'Fase creada.')
       setFaseDialogOpen(false)
       setSiguienteFaseOpen(false)
@@ -1032,9 +1132,28 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.error(faseObjetivo ? 'Esta fase ya tiene fixture generado.' : 'Esta categoría ya tiene partidos en el fixture.')
         return
       }
-      await generarFixtureCategoria(selectedCategoria)
-      if (faseObjetivo) {
-        await assignPartidosCategoriaSinFase(selectedCategoria, faseObjetivo.id)
+      if (faseObjetivo && tipoFase === 'todos_contra_todos') {
+        const equiposFase = await listFaseEquipos(faseObjetivo.id)
+        if (equiposFase.length > 0) {
+          await generarFixtureTodosContraTodosFase({
+            torneoId,
+            categoriaId: selectedCategoria,
+            faseTorneoId: faseObjetivo.id,
+            equipoIds: equiposFase.map((item) => item.equipo_id),
+            idaVuelta: false,
+          })
+        } else if (faseObjetivo.orden > 1) {
+          toast.error('No se puede generar fixture sin equipos asignados a esta fase.')
+          return
+        } else {
+          await generarFixtureCategoria(selectedCategoria)
+          await assignPartidosCategoriaSinFase(selectedCategoria, faseObjetivo.id)
+        }
+      } else {
+        await generarFixtureCategoria(selectedCategoria)
+        if (faseObjetivo) {
+          await assignPartidosCategoriaSinFase(selectedCategoria, faseObjetivo.id)
+        }
       }
       toast.success('Fixture generado.')
       setFixtureOpen(false)
@@ -2518,6 +2637,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     variant="secondary"
                     onClick={() => {
                       resetFaseForm()
+                      setFaseOrigenId(siguienteFaseQ.data?.faseActual?.id ?? '')
                       setSiguienteFaseOpen(true)
                     }}
                   >
@@ -2865,11 +2985,29 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1">
+              <Label>Fase anterior de referencia</Label>
+              <Select
+                value={faseOrigenId || siguienteFaseQ.data?.faseActual?.id || undefined}
+                onValueChange={setFaseOrigenId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Elige la fase anterior" />
+                </SelectTrigger>
+                <SelectContent>
+                  {fasesList.map((fase) => (
+                    <SelectItem key={fase.id} value={fase.id}>
+                      {fase.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex items-center justify-between rounded-md border p-3">
               <div>
                 <p className="text-sm font-medium">Reinicia tabla</p>
                 <p className="text-xs text-muted-foreground">
-                  No: goleadores y disciplina acumulan partidos de fases anteriores.
+                  Sí: esta fase arranca en cero. No: acumula con fases anteriores según el orden.
                 </p>
               </div>
               <Switch checked={faseReinicia} onCheckedChange={(v) => setFaseReinicia(v === true)} />
@@ -2903,6 +3041,86 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                 </Select>
               </div>
             </div>
+            <div className="space-y-1">
+              <Label>Fuente de equipos para esta fase</Label>
+              <Select value={clasificadosModo} onValueChange={setClasificadosModo}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos los equipos</SelectItem>
+                  <SelectItem value="manual">Selección manual</SelectItem>
+                  <SelectItem value="clasificacion">Desde clasificación anterior</SelectItem>
+                  <SelectItem value="sin_equipos">Partidos sin equipos todavía</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <Label>Total clasificados</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={faseClasificadosTotal}
+                  onChange={(e) => setFaseClasificadosTotal(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Clasificados por grupo</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={faseClasificadosPorGrupo}
+                  onChange={(e) => setFaseClasificadosPorGrupo(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Cuadrangulares/grupos</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={faseCuadrangularesCantidad}
+                  onChange={(e) => setFaseCuadrangularesCantidad(e.target.value)}
+                />
+              </div>
+            </div>
+            {faseTipo === 'eliminatoria_directa' && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <Label>Modalidad</Label>
+                  <Select value={faseModalidad} onValueChange={setFaseModalidad}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="solo_ida">Solo ida</SelectItem>
+                      <SelectItem value="ida_vuelta">Ida y vuelta</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Cruces</Label>
+                  <Select value={faseCruces} onValueChange={setFaseCruces}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="primero_vs_ultimo">Primero vs último</SelectItem>
+                      <SelectItem value="serpiente">Orden serpiente</SelectItem>
+                      <SelectItem value="manual">Manual</SelectItem>
+                      <SelectItem value="sin_equipos">Sin equipos todavía</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <div>
+                    <p className="text-sm font-medium">Tercer puesto</p>
+                    <p className="text-xs text-muted-foreground">No es tipo de fase.</p>
+                  </div>
+                  <Switch checked={faseTercerPuesto} onCheckedChange={(v) => setFaseTercerPuesto(v === true)} />
+                </div>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
               La selección y los cruces quedan preparados en la UI; guardar clasificados requiere persistencia adicional.
             </p>

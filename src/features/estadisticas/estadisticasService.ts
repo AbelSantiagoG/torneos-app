@@ -160,14 +160,17 @@ async function recalcularTablaDesdeResultados(
   baseRows: VistaRow[],
   faseTorneoId: string,
   grupoId: string | null,
+  partidoIdsOverride?: string[],
 ): Promise<VistaRow[]> {
   if (!faseTorneoId) return baseRows
 
-  let partidosQuery = supabase
-    .from('partidos')
-    .select('id, equipo_local_id, equipo_visitante_id, estado, grupo_id')
-    .eq('fase_torneo_id', faseTorneoId)
-  partidosQuery = grupoId ? partidosQuery.eq('grupo_id', grupoId) : partidosQuery
+  let partidosQuery = supabase.from('partidos').select('id, equipo_local_id, equipo_visitante_id, estado, grupo_id')
+  if (partidoIdsOverride?.length) {
+    partidosQuery = partidosQuery.in('id', partidoIdsOverride)
+  } else {
+    partidosQuery = partidosQuery.eq('fase_torneo_id', faseTorneoId)
+    partidosQuery = grupoId ? partidosQuery.eq('grupo_id', grupoId) : partidosQuery
+  }
   const partidosRes = await partidosQuery
 
   if (partidosRes.error || !partidosRes.data?.length) {
@@ -333,14 +336,16 @@ export async function fetchEstadisticasFiltradas(
     return { tabla, goleadores, disciplina }
   }
 
+  const partidoIdsAcumulados = await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId)
+
   tabla = await fetchTablaPosicionesFaseGrupo(faseTorneoId, null)
   if (!tabla.length) {
     tabla = filterVistaRowsPorFase(filterVistaRowsPorCategoria(base.tabla, categoriaId), faseTorneoId)
   }
   tabla = await enrichTablaConLogos(tabla, categoriaId)
-  tabla = await recalcularTablaDesdeResultados(tabla, faseTorneoId, null)
+  tabla = await recalcularTablaDesdeResultados(tabla, faseTorneoId, null, partidoIdsAcumulados)
 
-  const partidoIds = new Set(await partidoIdsParaEstadisticasFase(categoriaId, faseTorneoId))
+  const partidoIds = new Set(partidoIdsAcumulados)
   if (partidoIds.size) {
     goleadores = filterRowsPorPartidos(goleadores, partidoIds)
     disciplina = filterRowsPorPartidos(disciplina, partidoIds)
