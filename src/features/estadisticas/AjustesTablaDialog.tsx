@@ -15,7 +15,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { translateUserError } from '@/lib/errorMessages'
 import {
   calcularAjustesDesdeValoresFinales,
+  getAjusteTablaPosiciones,
   upsertAjusteTablaPosiciones,
+  type AjusteTablaPosicionesRow,
   type TablaPosicionRow,
 } from '@/features/estadisticas/tablaPosicionesService'
 
@@ -40,6 +42,7 @@ export function AjustesTablaDialog({ open, onOpenChange, torneoId, categoriaId, 
   const [fair, setFair] = useState('0')
   const [obs, setObs] = useState('')
   const [saving, setSaving] = useState(false)
+  const [ajusteActual, setAjusteActual] = useState<AjusteTablaPosicionesRow | null>(null)
 
   useEffect(() => {
     if (!row || !open) return
@@ -51,11 +54,35 @@ export function AjustesTablaDialog({ open, onOpenChange, torneoId, categoriaId, 
     setGc(String(row.gc))
     setPts(String(row.pts))
     setFair(String(row.fair_play))
+    setAjusteActual(null)
     setObs('')
-  }, [row, open])
+
+    let alive = true
+    void getAjusteTablaPosiciones(faseId, row.equipo_id).then((ajuste) => {
+      if (!alive) return
+      setAjusteActual(ajuste)
+      setObs(ajuste?.observaciones ?? '')
+    })
+    return () => {
+      alive = false
+    }
+  }, [faseId, row, open])
+
+  const baseSinAjuste = row
+    ? {
+        pj_base: row.pj - (ajusteActual?.ajuste_pj ?? row.pj - row.pj_base),
+        pg_base: row.pg - (ajusteActual?.ajuste_pg ?? row.pg - row.pg_base),
+        pe_base: row.pe - (ajusteActual?.ajuste_pe ?? row.pe - row.pe_base),
+        pp_base: row.pp - (ajusteActual?.ajuste_pp ?? row.pp - row.pp_base),
+        gf_base: row.gf - (ajusteActual?.ajuste_gf ?? row.gf - row.gf_base),
+        gc_base: row.gc - (ajusteActual?.ajuste_gc ?? row.gc - row.gc_base),
+        pts_base: row.pts - (ajusteActual?.ajuste_pts ?? row.pts - row.pts_base),
+        fair_play_base: row.fair_play - (ajusteActual?.ajuste_fairplay ?? row.fair_play - row.fair_play_base),
+      }
+    : null
 
   const guardar = async () => {
-    if (!row || !faseId) return
+    if (!row || !faseId || !baseSinAjuste) return
     const final = {
       pj: Number(pj),
       pg: Number(pg),
@@ -72,7 +99,7 @@ export function AjustesTablaDialog({ open, onOpenChange, torneoId, categoriaId, 
       fase_torneo_id: faseId,
       equipo_id: row.equipo_id,
       observaciones: obs.trim() || null,
-      ...calcularAjustesDesdeValoresFinales(final, row),
+      ...calcularAjustesDesdeValoresFinales(final, baseSinAjuste),
     }
     setSaving(true)
     try {

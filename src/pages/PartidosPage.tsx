@@ -66,6 +66,8 @@ import {
   assignPartidosCategoriaSinFase,
   upsertProgramacion,
   generarBorradorSorteo,
+  asignarEquiposLlaveEliminatoria,
+  eliminarLlavesEliminatoriaFase,
   type PartidosTorneoBundle,
   listLlavesEliminatoriaFase,
   type LlaveEliminatoriaUi,
@@ -217,7 +219,23 @@ function ordenRonda(nombre: string): number {
   return RONDA_ORDEN[key] ?? 99
 }
 
-function BracketEliminatoria({ llaves }: { llaves: LlaveEliminatoriaUi[] }) {
+type EquipoSelectOption = { id: string; nombre: string; sigla?: string | null }
+
+function BracketEliminatoria({
+  llaves,
+  equipos,
+  drafts,
+  savingId,
+  onDraftChange,
+  onAssign,
+}: {
+  llaves: LlaveEliminatoriaUi[]
+  equipos: EquipoSelectOption[]
+  drafts: Record<string, { localId: string; visitanteId: string }>
+  savingId?: string | null
+  onDraftChange: (llaveId: string, patch: Partial<{ localId: string; visitanteId: string }>) => void
+  onAssign: (llave: LlaveEliminatoriaUi) => void
+}) {
   const rondas = useMemo(() => {
     const map = new Map<string, LlaveEliminatoriaUi[]>()
     for (const llave of llaves) {
@@ -246,37 +264,87 @@ function BracketEliminatoria({ llaves }: { llaves: LlaveEliminatoriaUi[] }) {
               <div key={ronda.nombre} className="space-y-4">
                 <h3 className="text-center text-sm font-semibold">{ronda.nombre}</h3>
                 <div className="space-y-4">
-                  {ronda.items.map((llave, idx) => (
-                    <div key={llave.id} className="rounded-md border bg-card p-3 shadow-sm">
-                      <p className="mb-2 text-xs font-medium text-muted-foreground">
-                        {ronda.nombre} #{idx + 1}
-                      </p>
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 rounded-md bg-muted/30 p-2">
-                          <TeamAvatar
-                            nombre={llave.equipoLocalNombre}
-                            color="#16a34a"
-                            logoUrl={llave.equipoLocalLogoUrl}
-                            logoPublicId={llave.equipoLocalLogoPublicId}
-                          />
-                          <span className="min-w-0 truncate text-sm font-medium">{llave.equipoLocalNombre}</span>
+                  {ronda.items.map((llave, idx) => {
+                    const draft = drafts[llave.id] ?? {
+                      localId: llave.equipoLocalId ?? '',
+                      visitanteId: llave.equipoVisitanteId ?? '',
+                    }
+                    const canAssign = draft.localId && draft.visitanteId && draft.localId !== draft.visitanteId
+                    return (
+                      <div key={llave.id} className="rounded-md border bg-card p-3 shadow-sm">
+                        <p className="mb-2 text-xs font-medium text-muted-foreground">
+                          {ronda.nombre} #{idx + 1}
+                        </p>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 rounded-md bg-muted/30 p-2">
+                            <TeamAvatar
+                              nombre={llave.equipoLocalNombre}
+                              color="#16a34a"
+                              logoUrl={llave.equipoLocalLogoUrl}
+                              logoPublicId={llave.equipoLocalLogoPublicId}
+                            />
+                            <span className="min-w-0 truncate text-sm font-medium">{llave.equipoLocalNombre}</span>
+                          </div>
+                          <div className="flex items-center justify-center text-muted-foreground">vs</div>
+                          <div className="flex items-center gap-2 rounded-md bg-muted/30 p-2">
+                            <TeamAvatar
+                              nombre={llave.equipoVisitanteNombre}
+                              color="#64748b"
+                              logoUrl={llave.equipoVisitanteLogoUrl}
+                              logoPublicId={llave.equipoVisitanteLogoPublicId}
+                            />
+                            <span className="min-w-0 truncate text-sm font-medium">{llave.equipoVisitanteNombre}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-center text-muted-foreground">vs</div>
-                        <div className="flex items-center gap-2 rounded-md bg-muted/30 p-2">
-                          <TeamAvatar
-                            nombre={llave.equipoVisitanteNombre}
-                            color="#64748b"
-                            logoUrl={llave.equipoVisitanteLogoUrl}
-                            logoPublicId={llave.equipoVisitanteLogoPublicId}
-                          />
-                          <span className="min-w-0 truncate text-sm font-medium">{llave.equipoVisitanteNombre}</span>
-                        </div>
+                        {llave.partidoVueltaId && (
+                          <p className="mt-2 text-xs text-muted-foreground">Ida y vuelta</p>
+                        )}
+                        {equipos.length > 0 && (
+                          <div className="mt-3 grid gap-2">
+                            <Select
+                              value={draft.localId || undefined}
+                              onValueChange={(value) => onDraftChange(llave.id, { localId: value })}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue placeholder="Equipo local" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {equipos.map((equipo) => (
+                                  <SelectItem key={equipo.id} value={equipo.id}>
+                                    {equipo.nombre}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Select
+                              value={draft.visitanteId || undefined}
+                              onValueChange={(value) => onDraftChange(llave.id, { visitanteId: value })}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue placeholder="Equipo visitante" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {equipos.map((equipo) => (
+                                  <SelectItem key={equipo.id} value={equipo.id}>
+                                    {equipo.nombre}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!canAssign || savingId === llave.id}
+                              onClick={() => onAssign(llave)}
+                            >
+                              {savingId === llave.id ? 'Asignando...' : 'Asignar equipos'}
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      {llave.partidoVueltaId && (
-                        <p className="mt-2 text-xs text-muted-foreground">Ida y vuelta</p>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             ))}
@@ -355,6 +423,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     summary: FaseDeleteSummary
   } | null>(null)
   const [faseDeleting, setFaseDeleting] = useState(false)
+  const [llaveDrafts, setLlaveDrafts] = useState<Record<string, { localId: string; visitanteId: string }>>({})
+  const [llaveSavingId, setLlaveSavingId] = useState<string | null>(null)
 
   const [progPartido, setProgPartido] = useState<PartidoListaUi | null>(null)
   const [progFecha, setProgFecha] = useState('')
@@ -458,6 +528,23 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     enabled: Boolean(faseActualFixture?.id && fixtureEsEliminatoria),
     queryFn: () => listLlavesEliminatoriaFase(faseActualFixture!.id),
   })
+
+  useEffect(() => {
+    if (!fixtureEsEliminatoria) {
+      setLlaveDrafts({})
+      return
+    }
+    setLlaveDrafts((prev) => {
+      const next: Record<string, { localId: string; visitanteId: string }> = {}
+      for (const llave of llavesEliminatoria) {
+        next[llave.id] = prev[llave.id] ?? {
+          localId: llave.equipoLocalId ?? '',
+          visitanteId: llave.equipoVisitanteId ?? '',
+        }
+      }
+      return next
+    })
+  }, [fixtureEsEliminatoria, llavesEliminatoria])
 
   useEffect(() => {
     if (activeTab === 'grupos' && !mostrarTabGrupos) {
@@ -717,7 +804,50 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       'forzar',
       'confirm',
       'relacionad',
+      'constraint',
+      'foreign key',
+      'llave',
     ].some((token) => msg.includes(token))
+  }
+
+  const updateLlaveDraft = (llaveId: string, patch: Partial<{ localId: string; visitanteId: string }>) => {
+    setLlaveDrafts((prev) => ({
+      ...prev,
+      [llaveId]: {
+        localId: prev[llaveId]?.localId ?? '',
+        visitanteId: prev[llaveId]?.visitanteId ?? '',
+        ...patch,
+      },
+    }))
+  }
+
+  const asignarEquiposALlave = async (llave: LlaveEliminatoriaUi) => {
+    const draft = llaveDrafts[llave.id] ?? {
+      localId: llave.equipoLocalId ?? '',
+      visitanteId: llave.equipoVisitanteId ?? '',
+    }
+    if (!draft.localId || !draft.visitanteId || draft.localId === draft.visitanteId) {
+      toast.error('Selecciona equipos local y visitante distintos.')
+      return
+    }
+    setLlaveSavingId(llave.id)
+    try {
+      await asignarEquiposLlaveEliminatoria({
+        llaveId: llave.id,
+        partidoId: llave.partidoId,
+        partidoVueltaId: llave.partidoVueltaId,
+        equipoLocalId: draft.localId,
+        equipoVisitanteId: draft.visitanteId,
+      })
+      toast.success('Equipos asignados a la llave.')
+      await invalidatePartidos()
+      void refetchLlavesEliminatoria()
+    } catch (e) {
+      console.error('Error asignando equipos a llave', { llave, draft, error: e })
+      toast.error(translateUserError(e, 'fixture') || 'No se pudieron asignar los equipos.')
+    } finally {
+      setLlaveSavingId(null)
+    }
   }
 
   const requireFaseEspecifica = (accion = 'realizar esta acciÃƒÂ³n'): FaseTorneoUi | null => {
@@ -1502,10 +1632,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         if (!isForceDeleteError(e)) throw e
         const ok = confirm('Este fixture tiene informaciÃ³n asociada. Confirma si deseas eliminarlo.')
         if (!ok) return
+        if (fixtureEsEliminatoria) await eliminarLlavesEliminatoriaFase(faseId)
         await exec(true)
       }
+      if (fixtureEsEliminatoria) await eliminarLlavesEliminatoriaFase(faseId)
       toast.success('Fixture eliminado.')
       removePartidosFromCache(partidoIds)
+      if (fixtureEsEliminatoria) {
+        qc.setQueryData<LlaveEliminatoriaUi[]>(llavesEliminatoriaQueryKey, [])
+        void refetchLlavesEliminatoria()
+      }
       if (fixtureEsPorGrupos) {
         qc.setQueryData<FixtureGrupoUi[]>(fixtureGruposQueryKey, [])
         void refetchGruposFase()
@@ -1574,16 +1710,16 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     if (!torneoId || !sorteoCategoria) return
     const dias = Number(sorteoDias)
     if (Number.isNaN(dias) || dias < 1) {
-      toast.error('Indica un nÃºmero de dÃ­as vÃ¡lido (1 o mÃ¡s).')
+      toast.error('Indica un número de dí­as válido (1 o más).')
       return
     }
     const canchasActivas = canchas.filter((c) => c.activa !== false)
     if (!canchasActivas.length) {
-      toast.error('Configura al menos una cancha activa en ConfiguraciÃ³n.')
+      toast.error('Configura al menos una cancha activa en Configuración.')
       return
     }
     if (!pendientesSorteo.length) {
-      toast.message('No hay partidos pendientes por programar. Primero crea el fixture en Por categorÃ­a.')
+      toast.message('No hay partidos pendientes por programar. Primero crea el fixture en Por categorí­a.')
       return
     }
     try {
@@ -1596,11 +1732,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         dias,
       })
       setSorteoDrafts(borrador)
-      toast.success('Propuesta generada. Revisa y guarda cuando estÃ© listo.')
+      toast.success('Propuesta generada. Revisa y guarda cuando esté listo.')
     } catch (e) {
       console.error('Error generando borrador de sorteo', { categoriaId: sorteoCategoria, fechaInicio: sorteoFecha, dias, error: e })
       const msg = translateUserError(e, 'programacion')
-      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo actualizar la programaciÃ³n.')
+      toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo actualizar la programación.')
     }
   }
 
@@ -1634,7 +1770,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         toast.error('Completa al menos un partido con fecha, cancha y hora antes de guardar.')
         return
       }
-      toast.success(`Se guardaron ${guardados} programaciÃ³n${guardados === 1 ? '' : 'es'}.`)
+      toast.success(`Se guardaron ${guardados} programación${guardados === 1 ? '' : 'es'}.`)
       setSorteoDrafts({})
       invalidatePartidos()
     } catch (e) {
@@ -1663,11 +1799,11 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     setGuardandoProgramacion(true)
     try {
       await upsertProgramacion(progPartido.programacionId ?? null, payload)
-      toast.success('ProgramaciÃ³n guardada')
+      toast.success('Programación guardada')
       setProgPartido(null)
       invalidatePartidos()
     } catch (e) {
-      console.error('Error guardando programaciÃƒÂ³n', { payload, error: e })
+      console.error('Error guardando programación', { payload, error: e })
       const msg = translateUserError(e, 'programacion')
       toast.error(msg.includes('cancha durante ese horario') ? msg : 'No se pudo programar el partido. Revisa fecha, hora y cancha.')
     } finally {
@@ -1701,7 +1837,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     <div className="space-y-6">
       <PageHeader
         title="Partidos / Fixture"
-        description="1) Por categorÃ­a: emparejamientos y jornadas. 2) Sorteo: fecha, cancha y hora en programaciones. 3) Por fecha: solo lo ya programado."
+        description="1) Por categorí­a: emparejamientos y jornadas. 2) Sorteo: fecha, cancha y hora en programaciones. 3) Por fecha: solo lo ya programado."
       />
 
       <Dialog open={fixtureOpen} onOpenChange={setFixtureOpen}>
@@ -1712,8 +1848,8 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               {faseActualFixture?.tipo === 'eliminatoria_directa'
                 ? 'Configura la llave antes de generar los cruces. Final y tercer puesto no son tipos de fase independientes.'
                 : fixtureEsPorGrupos
-                ? 'Se crearÃ¡n jornadas dentro de cada grupo de la fase seleccionada. La fecha y hora se asignan despuÃ©s en Sorteo de horarios.'
-                : 'Se crearÃ¡n las jornadas y los enfrentamientos en la categorÃ­a seleccionada. La fecha y hora de juego se asignan despuÃ©s en Sorteo de horarios.'}
+                ? 'Se crearán jornadas dentro de cada grupo de la fase seleccionada. La fecha y hora se asignan despuéss en Sorteo de horarios.'
+                : 'Se crearán las jornadas y los enfrentamientos en la categorí­a seleccionada. La fecha y hora de juego se asignan despuéss en Sorteo de horarios.'}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
@@ -1861,7 +1997,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               Cancelar
             </Button>
             <Button type="button" onClick={() => void ejecutarGenerarFixture()} disabled={generandoFixture}>
-              {generandoFixture ? 'Generandoâ€¦' : fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar'}
+              {generandoFixture ? 'Generando¦' : fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2166,7 +2302,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
       <Dialog open={Boolean(progPartido)} onOpenChange={(o) => !o && setProgPartido(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{progPartido?.programacionId ? 'Editar programaciÃ³n' : 'Programar partido'}</DialogTitle>
+            <DialogTitle>{progPartido?.programacionId ? 'Editar programación' : 'Programar partido'}</DialogTitle>
             <DialogDescription>
               Modifica fecha, horas, cancha, estado u observaciones. Se evita duplicar la misma cancha y hora de inicio.
             </DialogDescription>
@@ -2239,7 +2375,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className={`grid w-full grid-cols-2 ${mostrarTabGrupos ? 'sm:grid-cols-5' : 'sm:grid-cols-4'} lg:inline-flex lg:w-auto`}>
-          <TabsTrigger value="categoria">Por CategorÃ­a</TabsTrigger>
+          <TabsTrigger value="categoria">Por Categoría</TabsTrigger>
           <TabsTrigger value="sorteo">Sorteo de Horarios</TabsTrigger>
           <TabsTrigger value="fecha">Por Fecha</TabsTrigger>
           {mostrarTabGrupos && <TabsTrigger value="grupos">Grupos</TabsTrigger>}
@@ -2257,14 +2393,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               ) : categorias.length === 0 ? (
                 <EmptyState
                   icon={Calendar}
-                  title="Sin categorÃ­as"
-                  description="Crea categorÃ­as antes de organizar el fixture."
+                  title="Sin categorías"
+                  description="Crea categorías antes de organizar el fixture."
                 />
               ) : (
                 <div className="flex flex-wrap items-end gap-3">
                   <Select value={selectedCategoria} onValueChange={setSelectedCategoria}>
                     <SelectTrigger className="w-full md:w-64">
-                      <SelectValue placeholder="CategorÃ­a" />
+                      <SelectValue placeholder="Categoría" />
                     </SelectTrigger>
                     <SelectContent>
                       {categorias.map((cat) => (
@@ -2295,7 +2431,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      if (requireFaseEspecifica('realizar esta acciÃƒÂ³n')) setFixtureOpen(true)
+                      if (requireFaseEspecifica('realizar esta acción')) setFixtureOpen(true)
                     }}
                   >
                     {fixtureEsPorGrupos ? 'Generar fixture por grupos' : 'Generar fixture'}
@@ -2344,7 +2480,14 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
           </Card>
 
           {fixtureEsEliminatoria && llavesEliminatoria.length > 0 && (
-            <BracketEliminatoria llaves={llavesEliminatoria} />
+            <BracketEliminatoria
+              llaves={llavesEliminatoria}
+              equipos={equiposCat.map((equipo) => ({ id: equipo.id, nombre: equipo.nombre, sigla: equipo.sigla ?? null }))}
+              drafts={llaveDrafts}
+              savingId={llaveSavingId}
+              onDraftChange={updateLlaveDraft}
+              onAssign={(llave) => void asignarEquiposALlave(llave)}
+            />
           )}
 
           {parLoading || (fixtureEsPorGrupos && gruposLoading) ? (

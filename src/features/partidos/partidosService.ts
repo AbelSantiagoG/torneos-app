@@ -247,6 +247,56 @@ export async function listLlavesEliminatoriaFase(faseTorneoId: string): Promise<
   })
 }
 
+export async function asignarEquiposLlaveEliminatoria(params: {
+  llaveId: string
+  partidoId?: string | null
+  partidoVueltaId?: string | null
+  equipoLocalId: string
+  equipoVisitanteId: string
+}): Promise<void> {
+  if (!params.equipoLocalId || !params.equipoVisitanteId || params.equipoLocalId === params.equipoVisitanteId) {
+    throw new Error('Selecciona equipos local y visitante distintos.')
+  }
+
+  const llave = await supabase
+    .from('llaves_eliminatoria')
+    .update({
+      equipo_local_id: params.equipoLocalId,
+      equipo_visitante_id: params.equipoVisitanteId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.llaveId)
+  if (llave.error) throw toUserError(llave.error, 'fixture')
+
+  if (params.partidoId) {
+    const ida = await supabase
+      .from('partidos')
+      .update({
+        equipo_local_id: params.equipoLocalId,
+        equipo_visitante_id: params.equipoVisitanteId,
+      })
+      .eq('id', params.partidoId)
+    if (ida.error) throw toUserError(ida.error, 'fixture')
+  }
+
+  if (params.partidoVueltaId) {
+    const vuelta = await supabase
+      .from('partidos')
+      .update({
+        equipo_local_id: params.equipoVisitanteId,
+        equipo_visitante_id: params.equipoLocalId,
+      })
+      .eq('id', params.partidoVueltaId)
+    if (vuelta.error) throw toUserError(vuelta.error, 'fixture')
+  }
+}
+
+export async function eliminarLlavesEliminatoriaFase(faseTorneoId: string): Promise<void> {
+  if (!faseTorneoId) return
+  const r = await supabase.from('llaves_eliminatoria').delete().eq('fase_torneo_id', faseTorneoId)
+  if (r.error) throw toUserError(r.error, 'fixture')
+}
+
 async function applyResultadosPartidos<T extends PartidoListaUi>(partidos: T[]): Promise<T[]> {
   const ids = [...new Set(partidos.map((p) => p.id).filter(Boolean))]
   if (!ids.length) return partidos
