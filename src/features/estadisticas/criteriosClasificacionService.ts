@@ -69,6 +69,10 @@ const CRITERIO_DIRECCION: Record<CriterioClasificacion, 'asc' | 'desc'> = {
   sorteo_manual: 'asc',
 }
 
+// La tabla de criterios no esta expuesta por REST en todos los entornos.
+// Evitamos consultar el endpoint directo para no generar 404 en la consola.
+const PERSIST_CRITERIOS_REMOTELY = false
+
 function criteriosStorageKey(faseTorneoId: string): string {
   return `criterios-clasificacion-fase:${faseTorneoId}`
 }
@@ -126,6 +130,8 @@ function mapRow(raw: Record<string, unknown>, faseTorneoId: string): CriterioFas
 }
 
 export async function listCriteriosClasificacionFase(faseTorneoId: string): Promise<CriterioFaseRow[]> {
+  if (!PERSIST_CRITERIOS_REMOTELY) return readLocalCriterios(faseTorneoId)
+
   const r = await supabase
     .from('criterios_clasificacion_fase')
     .select('id, torneo_id, categoria_id, fase_torneo_id, criterio, orden, direccion, activo')
@@ -133,8 +139,8 @@ export async function listCriteriosClasificacionFase(faseTorneoId: string): Prom
     .order('orden', { ascending: true })
 
   if (r.error) {
-    console.error('Error en estadisticas', { tabla: 'criterios_clasificacion_fase', faseTorneoId, error: r.error })
     if (isMissingCriteriaTable(r.error)) return readLocalCriterios(faseTorneoId)
+    console.error('Error en estadisticas', { tabla: 'criterios_clasificacion_fase', faseTorneoId, error: r.error })
     throw toUserError(r.error, 'programacion')
   }
 
@@ -152,6 +158,8 @@ export async function guardarCriteriosClasificacionFase(params: {
 }): Promise<CriterioFaseRow[]> {
   const faseTorneoId = params.faseTorneoId
   const criterios = normalizarOrdenCriterios(params.criterios)
+  if (!PERSIST_CRITERIOS_REMOTELY) return writeLocalCriterios(faseTorneoId, criterios)
+
   const existingRes = await supabase
     .from('criterios_clasificacion_fase')
     .select('id, criterio')

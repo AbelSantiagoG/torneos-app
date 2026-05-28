@@ -3,6 +3,7 @@ import type { EquipoRow } from '@/types/database'
 import { mapEquipoRow, type Equipo } from '@/types/torneo'
 import { assertNoSupabaseError, toUserError } from '@/lib/supabaseErrors'
 import { deletePartidoCascade } from '@/features/partidos/partidoCleanup'
+import { pickNum, pickStr } from '@/features/_shared/supabaseHelpers'
 
 async function countJugadoresActivosPorEquipo(equipoIds: string[]): Promise<Map<string, number>> {
   const map = new Map<string, number>()
@@ -131,4 +132,147 @@ export async function deleteEquipo(id: string): Promise<void> {
 export async function getEquipoById(id: string): Promise<EquipoRow | null> {
   const result = await supabase.from('equipos').select('*').eq('id', id).maybeSingle()
   return assertNoSupabaseError(result) as EquipoRow | null
+}
+
+export type EquipoResumenDetalle = {
+  equipoId: string
+  nombre: string
+  categoria: string
+  jugadores: number
+  partidosJugados: number
+  golesFavor: number
+  golesContra: number
+  estadoPago: string
+  logoUrl: string | null
+  logoPublicId: string | null
+  color: string | null
+}
+
+export type JugadorEquipoEstadistica = {
+  jugadorId: string
+  nombre: string
+  documento: string
+  fechaNacimiento: string | null
+  anioNacimiento: number | null
+  fotoUrl: string | null
+  fotoPublicId: string | null
+  partidosJugados: number
+  goles: number
+  amarillas: number
+  rojas: number
+  fairplay: number
+}
+
+export type EquipoPartidoDetalle = {
+  partidoId: string
+  fecha: string | null
+  hora: string | null
+  rival: string
+  condicion: 'Local' | 'Visitante'
+  cancha: string | null
+  jornada: number
+  fase: string | null
+  grupo: string | null
+  estado: string
+  marcadorLocal: number | null
+  marcadorVisitante: number | null
+  resultadoNota: string | null
+  definicion: string | null
+  equipoLocal: string
+  equipoVisitante: string
+  equipoLocalLogoUrl: string | null
+  equipoLocalLogoPublicId: string | null
+  equipoVisitanteLogoUrl: string | null
+  equipoVisitanteLogoPublicId: string | null
+}
+
+function num(row: Record<string, unknown>, ...keys: string[]): number {
+  return pickNum(row, ...keys)
+}
+
+function str(row: Record<string, unknown>, ...keys: string[]): string {
+  return pickStr(row, ...keys)
+}
+
+export async function getEquipoResumenDetalle(equipoId: string): Promise<EquipoResumenDetalle | null> {
+  const result = await supabase.from('vw_equipo_resumen_detalle').select('*').eq('equipo_id', equipoId).maybeSingle()
+  if (result.error) throw toUserError(result.error, 'equipo')
+  if (!result.data) return null
+  const row = result.data as Record<string, unknown>
+  return {
+    equipoId,
+    nombre: str(row, 'equipo', 'equipo_nombre', 'nombre') || 'Equipo',
+    categoria: str(row, 'categoria', 'categoria_nombre') || '',
+    jugadores: num(row, 'jugadores', 'jugadores_activos', 'cantidad_jugadores', 'total_jugadores'),
+    partidosJugados: num(row, 'partidos_jugados', 'pj', 'jugados'),
+    golesFavor: num(row, 'goles_favor', 'gf'),
+    golesContra: num(row, 'goles_contra', 'gc'),
+    estadoPago: str(row, 'estado_pago', 'estado_inscripcion', 'pago_estado') || 'pendiente',
+    logoUrl: str(row, 'logo_url') || null,
+    logoPublicId: str(row, 'logo_public_id') || null,
+    color: str(row, 'color') || null,
+  }
+}
+
+export async function getJugadoresEquipoEstadisticas(equipoId: string): Promise<JugadorEquipoEstadistica[]> {
+  const result = await supabase
+    .from('vw_jugadores_equipo_estadisticas')
+    .select('*')
+    .eq('equipo_id', equipoId)
+    .order('jugador', { ascending: true })
+  if (result.error) throw toUserError(result.error, 'jugador')
+  return ((result.data ?? []) as Record<string, unknown>[]).map((row) => ({
+    jugadorId: str(row, 'jugador_id', 'id'),
+    nombre: str(row, 'jugador', 'nombre_jugador', 'nombre_completo', 'nombre') || 'Jugador',
+    documento: str(row, 'documento') || '-',
+    fechaNacimiento: str(row, 'fecha_nacimiento') || null,
+    anioNacimiento: num(row, 'anio_nacimiento') || null,
+    fotoUrl: str(row, 'foto_url') || null,
+    fotoPublicId: str(row, 'foto_public_id') || null,
+    partidosJugados: num(row, 'partidos_jugados', 'pj', 'juegos'),
+    goles: num(row, 'goles'),
+    amarillas: num(row, 'amarillas', 'tarjetas_amarillas'),
+    rojas: num(row, 'rojas', 'tarjetas_rojas'),
+    fairplay: num(row, 'fairplay', 'fair_play'),
+  }))
+}
+
+export async function getEquipoPartidosDetalle(equipoId: string): Promise<EquipoPartidoDetalle[]> {
+  const result = await supabase
+    .from('vw_equipo_partidos_detalle')
+    .select('*')
+    .eq('equipo_id', equipoId)
+    .order('fecha', { ascending: true, nullsFirst: false })
+    .order('hora_inicio', { ascending: true, nullsFirst: false })
+  if (result.error) throw toUserError(result.error, 'fixture')
+  return ((result.data ?? []) as Record<string, unknown>[]).map((row) => {
+    const condicionRaw = str(row, 'condicion', 'local_visitante').toLowerCase()
+    const condicion = condicionRaw.includes('visit') ? 'Visitante' : 'Local'
+    const marcadorLocalRaw = row.marcador_local
+    const marcadorVisitanteRaw = row.marcador_visitante
+    const marcadorLocal = marcadorLocalRaw == null || marcadorLocalRaw === '' ? null : Number(marcadorLocalRaw)
+    const marcadorVisitante = marcadorVisitanteRaw == null || marcadorVisitanteRaw === '' ? null : Number(marcadorVisitanteRaw)
+    return {
+      partidoId: str(row, 'partido_id', 'id'),
+      fecha: str(row, 'fecha') || null,
+      hora: str(row, 'hora_inicio', 'hora') || null,
+      rival: str(row, 'rival', 'equipo_rival', 'oponente') || 'Rival',
+      condicion,
+      cancha: str(row, 'cancha', 'cancha_nombre') || null,
+      jornada: num(row, 'jornada'),
+      fase: str(row, 'fase', 'fase_nombre') || null,
+      grupo: str(row, 'grupo', 'grupo_nombre') || null,
+      estado: str(row, 'estado') || '',
+      marcadorLocal: Number.isFinite(marcadorLocal) ? marcadorLocal : null,
+      marcadorVisitante: Number.isFinite(marcadorVisitante) ? marcadorVisitante : null,
+      resultadoNota: str(row, 'resultado_nota') || null,
+      definicion: str(row, 'definicion') || null,
+      equipoLocal: str(row, 'equipo_local', 'local') || '',
+      equipoVisitante: str(row, 'equipo_visitante', 'visitante') || '',
+      equipoLocalLogoUrl: str(row, 'logo_local_url', 'equipo_local_logo_url') || null,
+      equipoLocalLogoPublicId: str(row, 'logo_local_public_id', 'equipo_local_logo_public_id') || null,
+      equipoVisitanteLogoUrl: str(row, 'logo_visitante_url', 'equipo_visitante_logo_url') || null,
+      equipoVisitanteLogoPublicId: str(row, 'logo_visitante_public_id', 'equipo_visitante_logo_public_id') || null,
+    }
+  })
 }

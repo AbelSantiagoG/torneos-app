@@ -10,17 +10,15 @@ export type ResumenArbitrajesUi = {
 }
 
 export async function listArbitrajesTorneo(torneoId: string): Promise<ArbitrajeRowUi[]> {
-  const direct = await supabase.from('arbitrajes').select('*').eq('torneo_id', torneoId)
-  if (!direct.error && direct.data && direct.data.length > 0) {
-    return direct.data as ArbitrajeRowUi[]
-  }
-
   const partRes = await supabase.from('partidos').select('id').eq('torneo_id', torneoId)
   const partIds = (throwOnError(partRes) as { id: string }[]).map((p) => p.id)
   if (!partIds.length) return []
 
   const arb = await supabase.from('arbitrajes').select('*').in('partido_id', partIds)
-  if (arb.error) throw new Error(arb.error.message)
+  if (arb.error) {
+    console.error('Error cargando arbitrajes', { torneoId, error: arb.error })
+    return []
+  }
   return (arb.data ?? []) as ArbitrajeRowUi[]
 }
 
@@ -65,12 +63,12 @@ export async function crearArbitrajeSiNoExiste(input: {
   valor: number
 }): Promise<void> {
   const ex = await supabase.from('arbitrajes').select('id').eq('partido_id', input.partido_id).maybeSingle()
+  if (ex.error) throw ex.error
   if (ex.data) return
   const ins = await supabase.from('arbitrajes').insert({
-    torneo_id: input.torneo_id,
     partido_id: input.partido_id,
     valor: input.valor,
     estado_pago: 'pendiente',
   })
-  if (ins.error) throw new Error(ins.error.message)
+  if (ins.error) throw ins.error
 }

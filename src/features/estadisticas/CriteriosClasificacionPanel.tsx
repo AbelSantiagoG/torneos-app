@@ -40,6 +40,7 @@ export function CriteriosClasificacionPanel({ torneoId, categoriaId, faseId, onC
     queryKey: estadisticasCriteriosQueryKey(faseId),
     enabled: Boolean(faseId),
     queryFn: () => listCriteriosClasificacionFase(faseId),
+    retry: false,
   })
 
   const criterios = q.data?.length ? criteriosOrdenadosDesdeRows(q.data) : local
@@ -74,7 +75,7 @@ export function CriteriosClasificacionPanel({ torneoId, categoriaId, faseId, onC
       try {
         await qc.invalidateQueries({ queryKey: estadisticasCriteriosQueryKey(faseId) })
       } catch (error) {
-        console.error('Error refrescando criterios de clasificaciÃ³n', { faseId, error })
+        console.error('Error refrescando criterios de clasificación', { faseId, error })
         toast.warning('Criterios guardados, pero no se pudo actualizar la vista.')
         return
       }
@@ -127,7 +128,7 @@ export function CriteriosClasificacionPanel({ torneoId, categoriaId, faseId, onC
       <CardHeader>
         <CardTitle>Criterios de clasificación</CardTitle>
         <CardDescription>
-          Orden de desempate para la tabla. Se guardan por fase y se aplican al instante (1, 2, 3…).
+          Orden de desempate para la tabla. Se guardan por fase y se aplican al instante (1, 2, 3...).
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -192,11 +193,12 @@ export function CriteriosClasificacionPanel({ torneoId, categoriaId, faseId, onC
               <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-[200px] flex-1 space-y-1">
                   <span className="text-xs text-muted-foreground">Agregar criterio</span>
-                  <Select value={nuevo || undefined} onValueChange={(v) => setNuevo(v as CriterioClasificacion)}>
+                  <Select value={nuevo || '__none__'} onValueChange={(v) => setNuevo(v === '__none__' ? '' : (v as CriterioClasificacion))}>
                     <SelectTrigger>
                       <SelectValue placeholder="Elegir criterio" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="__none__">Elegir criterio</SelectItem>
                       {disponibles.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.label}
@@ -211,7 +213,7 @@ export function CriteriosClasificacionPanel({ torneoId, categoriaId, faseId, onC
                 </Button>
               </div>
             )}
-            {saveMut.isPending && <p className="text-xs text-muted-foreground">Guardando criterios…</p>}
+            {saveMut.isPending && <p className="text-xs text-muted-foreground">Guardando criterios...</p>}
           </>
         )}
       </CardContent>

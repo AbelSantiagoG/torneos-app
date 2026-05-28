@@ -347,11 +347,12 @@ export function EstadisticasPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={selectedFase || undefined} onValueChange={setSelectedFase}>
+              <Select value={selectedFase || '__none__'} onValueChange={(value) => setSelectedFase(value === '__none__' ? '' : value)}>
                 <SelectTrigger className="w-full md:w-48">
                   <SelectValue placeholder="Fase" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="__none__">Todas las fases</SelectItem>
                   {fasesList.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
                       {f.nombre}

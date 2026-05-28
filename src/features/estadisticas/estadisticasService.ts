@@ -309,13 +309,13 @@ export async function fetchEstadisticasTorneo(torneoId: string): Promise<{
 }> {
   const [tabla, goleadores, disciplina] = await Promise.all([
     fetchViewTorneo('vw_tabla_posiciones', torneoId),
-    fetchViewTorneo('vw_goleadores_ranking_detalle', torneoId),
-    fetchViewTorneo('vw_disciplina_ranking_detalle', torneoId),
+    fetchViewTorneo('vw_goleadores', torneoId),
+    fetchViewTorneo('vw_disciplina', torneoId),
   ])
   return {
     tabla,
-    goleadores: goleadores.length ? goleadores : await fetchViewTorneo('vw_goleadores', torneoId),
-    disciplina: disciplina.length ? disciplina : await fetchViewTorneo('vw_disciplina', torneoId),
+    goleadores,
+    disciplina,
   }
 }
 
@@ -367,7 +367,7 @@ export async function fetchTablaPosicionesFaseGrupo(
       return enrichTablaConLogos((Array.isArray(r.data) ? r.data : [r.data]) as VistaRow[])
     }
     if (r.error) {
-      console.error('Error en estadÃ­sticas', {
+      console.error('Error en estadísticas', {
         rpc: 'obtener_tabla_posiciones_fase_grupo',
         args,
         error: r.error,

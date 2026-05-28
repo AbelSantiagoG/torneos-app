@@ -34,16 +34,40 @@ import { pickStr } from '@/features/_shared/supabaseHelpers'
 import type { ArbitrajeRowUi } from '@/features/arbitrajes/arbitrajesService'
 import { crearArbitrajeSiNoExiste } from '@/features/arbitrajes/arbitrajesService'
 
-function rowKeys(rows: ArbitrajeRowUi[]): string[] {
-  const first = rows[0]
-  if (!first) return []
-  return Object.keys(first).filter((k) => !['torneo_id'].includes(k)).slice(0, 14)
+function partidoLabel(row: Record<string, unknown>, kind: 'local' | 'visitante'): string {
+  return kind === 'local'
+    ? pickStr(row, 'equipo_local', 'equipo_local_nombre', 'local', 'nombre_local')
+    : pickStr(row, 'equipo_visitante', 'equipo_visitante_nombre', 'visitante', 'nombre_visitante')
+}
+
+function faseLabel(row: Record<string, unknown>): string {
+  return pickStr(row, 'fase_nombre', 'fase', 'nombre_fase') || '-'
+}
+
+function categoriaLabel(row: Record<string, unknown>): string {
+  return pickStr(row, 'categoria', 'categoria_nombre', 'nombre_categoria') || '-'
+}
+
+function jornadaLabel(row: Record<string, unknown>): string {
+  return pickStr(row, 'jornada') || '-'
+}
+
+function pickNumSafe(row: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = row[key]
+    if (value != null && value !== '') {
+      const num = Number(value)
+      if (!Number.isNaN(num)) return num
+    }
+  }
+  return 0
 }
 
 export function ArbitrajesPage() {
   const qc = useQueryClient()
   const [filterCategoria, setFilterCategoria] = useState('all')
   const [filterEstado, setFilterEstado] = useState('all')
+  const [registrandoPartidoId, setRegistrandoPartidoId] = useState<string | null>(null)
 
   const { data: torneo, isLoading: torneoLoading } = useTorneoActivo()
   const torneoId = torneo?.id
@@ -51,59 +75,63 @@ export function ArbitrajesPage() {
   const { data, isLoading, error } = useArbitrajes(torneoId)
 
   useEffect(() => {
-    if (error) toast.error(translateUserError(error, 'finanzas'))
+    if (error) toast.error(translateUserError(error, 'default'))
   }, [error])
 
   const lista = data?.lista ?? []
   const desdeActas = data?.desdeActas ?? []
   const resumen = data?.resumen
-
   const fuente = desdeActas.length ? desdeActas : lista
-  const keys = useMemo(() => rowKeys(fuente), [fuente])
 
   const filtered = useMemo(() => {
     return fuente.filter((row) => {
-      const r = row as Record<string, unknown>
-      const cid = pickStr(r, 'categoria_id')
-      if (filterCategoria !== 'all' && cid && cid !== filterCategoria) return false
+      const record = row as Record<string, unknown>
+      const categoriaId = pickStr(record, 'categoria_id')
+      if (filterCategoria !== 'all' && categoriaId && categoriaId !== filterCategoria) return false
       if (filterEstado === 'pagado') {
-        const p = String(r.pagado ?? r.pagada ?? '').toLowerCase()
-        if (!(p === 'true' || p === '1' || r.estado_pago === 'pagado')) return false
+        const pago = String(record.pagado ?? record.pagada ?? '').toLowerCase()
+        if (!(pago === 'true' || pago === '1' || record.estado_pago === 'pagado')) return false
       }
       if (filterEstado === 'pendiente') {
-        const p = String(r.pagado ?? r.pagada ?? '').toLowerCase()
-        if (p === 'true' || p === '1' || r.estado_pago === 'pagado') return false
+        const pago = String(record.pagado ?? record.pagada ?? '').toLowerCase()
+        if (pago === 'true' || pago === '1' || record.estado_pago === 'pagado') return false
       }
       return true
     })
   }, [fuente, filterCategoria, filterEstado])
 
   const tarifaPorCategoria = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const c of categorias) m.set(c.id, c.tarifaArbitraje)
-    return m
+    const map = new Map<string, number>()
+    for (const categoria of categorias) map.set(categoria.id, categoria.tarifaArbitraje)
+    return map
   }, [categorias])
 
   const registrarArbitraje = async (row: ArbitrajeRowUi) => {
     if (!torneoId) return
-    const r = row as Record<string, unknown>
-    const partidoId = pickStr(r, 'partido_id')
-    const catId = pickStr(r, 'categoria_id')
+    const record = row as Record<string, unknown>
+    const partidoId = pickStr(record, 'partido_id')
+    const categoriaId = pickStr(record, 'categoria_id')
     if (!partidoId) {
       toast.error('No se pudo identificar el partido en la vista.')
       return
     }
-    const valor = tarifaPorCategoria.get(catId) ?? pickNumSafe(r, 'valor_arbitraje', 'tarifa_arbitraje', 'valor')
+
+    const valor = tarifaPorCategoria.get(categoriaId) ?? pickNumSafe(record, 'valor_arbitraje', 'tarifa_arbitraje', 'valor')
     if (!valor || valor <= 0) {
       toast.error('Define la tarifa de arbitraje en la categoría antes de registrar.')
       return
     }
+
     try {
+      setRegistrandoPartidoId(partidoId)
       await crearArbitrajeSiNoExiste({ torneo_id: torneoId, partido_id: partidoId, valor })
       toast.success('Arbitraje registrado.')
       void qc.invalidateQueries({ queryKey: arbitrajesQueryKey(torneoId) })
-    } catch (e) {
-      toast.error(translateUserError(e, 'finanzas'))
+    } catch (error) {
+      console.error('Error registrando arbitraje', { torneoId, partidoId, valor, error })
+      toast.error('No se pudo registrar el arbitraje. Revisa la tarifa y los datos del partido.')
+    } finally {
+      setRegistrandoPartidoId(null)
     }
   }
 
@@ -129,7 +157,7 @@ export function ArbitrajesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Arbitrajes"
-        description="Partidos con acta (vista vw_actas_partido_detalle) y registros en arbitrajes."
+        description="Pagos y control de arbitraje"
         actions={
           <Button variant="outline" disabled>
             <Printer className="mr-2 h-4 w-4" />
@@ -139,15 +167,15 @@ export function ArbitrajesPage() {
       />
 
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard title="Partidos (vista resumen)" value={resumen?.totalPartidos ?? 0} icon={Calendar} />
+        <StatCard title="Partidos" value={resumen?.totalPartidos ?? 0} icon={Calendar} />
         <StatCard
-          title="Total pagado (vista)"
+          title="Total pagado"
           value={formatCurrency(resumen?.totalPagado ?? 0)}
           icon={CheckCircle}
           variant="success"
         />
         <StatCard
-          title="Pendiente (vista)"
+          title="Pendiente"
           value={formatCurrency(resumen?.totalPendiente ?? 0)}
           icon={Clock}
           variant="warning"
@@ -170,9 +198,9 @@ export function ArbitrajesPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas</SelectItem>
-                {categorias.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.nombre}
+                {categorias.map((categoria) => (
+                  <SelectItem key={categoria.id} value={categoria.id}>
+                    {categoria.nombre}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -197,9 +225,7 @@ export function ArbitrajesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Desde actas / arbitrajes</CardTitle>
-          <CardDescription>
-            Si la vista de actas está disponible, se muestran esas filas; si no, la tabla arbitrajes.
-          </CardDescription>
+          <CardDescription>Partidos con acta listos para registrar o consultar arbitraje.</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -216,39 +242,47 @@ export function ArbitrajesPage() {
                 <TableHeader>
                   <TableRow>
                     {desdeActas.length > 0 && <TableHead className="w-[1%]">Acción</TableHead>}
-                    {keys.map((k) => (
-                      <TableHead key={k}>{k.replace(/_/g, ' ')}</TableHead>
-                    ))}
+                    <TableHead>Jornada</TableHead>
+                    <TableHead>Fase</TableHead>
+                    <TableHead>Categoría</TableHead>
+                    <TableHead>Equipo local</TableHead>
+                    <TableHead>Equipo visitante</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.map((row, idx) => {
-                    const r = row as Record<string, unknown>
-                    const partidoId = pickStr(r, 'partido_id')
+                    const record = row as Record<string, unknown>
+                    const partidoId = pickStr(record, 'partido_id')
                     const tieneArbitraje = lista.some(
-                      (a) => pickStr(a as Record<string, unknown>, 'partido_id') === partidoId,
+                      (arbitraje) => pickStr(arbitraje as Record<string, unknown>, 'partido_id') === partidoId,
                     )
                     return (
-                      <TableRow key={idx}>
+                      <TableRow key={`${partidoId || idx}`}>
                         {desdeActas.length > 0 && (
                           <TableCell>
                             {!tieneArbitraje && partidoId ? (
-                              <Button type="button" size="sm" variant="outline" onClick={() => void registrarArbitraje(row)}>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={registrandoPartidoId === partidoId}
+                                onClick={() => void registrarArbitraje(row)}
+                              >
                                 <Plus className="mr-1 h-4 w-4" />
-                                Registrar
+                                {registrandoPartidoId === partidoId ? 'Registrando...' : 'Registrar'}
                               </Button>
                             ) : tieneArbitraje ? (
                               <Badge variant="secondary">Registrado</Badge>
                             ) : (
-                              '—'
+                              '-'
                             )}
                           </TableCell>
                         )}
-                        {keys.map((k) => {
-                          const v = r[k]
-                          const s = v == null ? '—' : typeof v === 'number' ? String(v) : String(v)
-                          return <TableCell key={k}>{s}</TableCell>
-                        })}
+                        <TableCell>{jornadaLabel(record)}</TableCell>
+                        <TableCell>{faseLabel(record)}</TableCell>
+                        <TableCell>{categoriaLabel(record)}</TableCell>
+                        <TableCell className="font-medium">{partidoLabel(record, 'local') || '-'}</TableCell>
+                        <TableCell className="font-medium">{partidoLabel(record, 'visitante') || '-'}</TableCell>
                       </TableRow>
                     )
                   })}
@@ -276,15 +310,15 @@ export function ArbitrajesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {categorias.map((c) => (
-                  <TableRow key={c.id}>
+                {categorias.map((categoria) => (
+                  <TableRow key={categoria.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: c.color }} />
-                        {c.nombre}
+                        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: categoria.color }} />
+                        {categoria.nombre}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right font-medium">{formatCurrency(c.tarifaArbitraje)}</TableCell>
+                    <TableCell className="text-right font-medium">{formatCurrency(categoria.tarifaArbitraje)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -294,15 +328,4 @@ export function ArbitrajesPage() {
       </Card>
     </div>
   )
-}
-
-function pickNumSafe(r: Record<string, unknown>, ...keys: string[]): number {
-  for (const k of keys) {
-    const v = r[k]
-    if (v != null && v !== '') {
-      const n = Number(v)
-      if (!Number.isNaN(n)) return n
-    }
-  }
-  return 0
 }

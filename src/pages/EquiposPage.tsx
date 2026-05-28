@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, Upload, Users, Edit, Trash2, AlertCircle, CheckCircle, Search, UserPlus, ArrowRightLeft, Download, User } from 'lucide-react'
+import { Plus, Upload, Users, Edit, Trash2, AlertCircle, CheckCircle, Search, UserPlus, ArrowRightLeft, Download, User, CalendarDays, Trophy, Shield, MapPin, type LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import {
   Table,
   TableBody,
@@ -43,7 +42,13 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { CrearTorneoDialog } from '@/components/torneos/CrearTorneoDialog'
-import { existeEquipoNombreEnCategoria } from '@/features/equipos/equiposService'
+import {
+  existeEquipoNombreEnCategoria,
+  getEquipoPartidosDetalle,
+  getEquipoResumenDetalle,
+  getJugadoresEquipoEstadisticas,
+  type EquipoPartidoDetalle,
+} from '@/features/equipos/equiposService'
 import { parseSpreadsheetToRows } from '@/features/excel/parseSheet'
 import { importEquiposFromRows } from '@/features/excel/importEquipos'
 import { importJugadoresFromRows } from '@/features/excel/importJugadores'
@@ -69,9 +74,47 @@ import { useJugadores } from '@/features/jugadores/useJugadores'
 import { jugadoresQueryKey } from '@/features/jugadores/useJugadores'
 import { jugadoresCategoriaQueryKey } from '@/features/jugadores/useJugadoresPorCategoria'
 import type { Equipo } from '@/types/torneo'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatDateOnly } from '@/lib/utils'
+
+function PartidoEquipoCard({ partido, showResult = false }: { partido: EquipoPartidoDetalle; showResult?: boolean }) {
+  const fecha = partido.fecha ? formatDateOnly(partido.fecha) : 'Sin fecha'
+  const hora = partido.hora ? partido.hora.slice(0, 5) : ''
+  const marcador =
+    partido.marcadorLocal != null && partido.marcadorVisitante != null
+      ? `${partido.marcadorLocal} - ${partido.marcadorVisitante}`
+      : partido.definicion === 'suspendido'
+        ? 'Suspendido'
+        : 'vs'
+
+  return (
+    <div className="rounded-lg border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{partido.rival}</p>
+          <p className="text-xs text-muted-foreground">
+            {partido.condicion} · Jornada {partido.jornada || '-'}
+          </p>
+        </div>
+        <Badge variant={showResult ? 'secondary' : 'outline'}>{marcador}</Badge>
+      </div>
+      <div className="mt-3 grid gap-1 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1">
+          <CalendarDays className="h-3.5 w-3.5" />
+          {fecha}{hora ? ` · ${hora}` : ''}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <MapPin className="h-3.5 w-3.5" />
+          {partido.cancha || 'Cancha por definir'}
+        </span>
+        <span>{[partido.fase, partido.grupo].filter(Boolean).join(' · ') || 'Fase por definir'}</span>
+        {partido.resultadoNota ? <span className="font-medium">{partido.resultadoNota}</span> : null}
+      </div>
+    </div>
+  )
+}
 
 export function EquiposPage() {
   const qc = useQueryClient()
@@ -137,13 +180,96 @@ export function EquiposPage() {
     isMutating: jugMutating,
   } = useJugadores(selectedEquipo?.id, selectedCategoria || undefined)
 
-  const jugadoresEquipoFiltrados = useMemo(() => {
+  const equipoResumenQ = useQuery({
+    queryKey: ['equipo-resumen-detalle', selectedEquipo?.id],
+    enabled: Boolean(selectedEquipo?.id && isPlayersSheetOpen),
+    queryFn: () => getEquipoResumenDetalle(selectedEquipo!.id),
+  })
+
+  const jugadoresStatsQ = useQuery({
+    queryKey: ['jugadores-equipo-estadisticas', selectedEquipo?.id],
+    enabled: Boolean(selectedEquipo?.id && isPlayersSheetOpen),
+    queryFn: () => getJugadoresEquipoEstadisticas(selectedEquipo!.id),
+  })
+
+  const partidosEquipoQ = useQuery({
+    queryKey: ['equipo-partidos-detalle', selectedEquipo?.id],
+    enabled: Boolean(selectedEquipo?.id && isPlayersSheetOpen),
+    queryFn: () => getEquipoPartidosDetalle(selectedEquipo!.id),
+  })
+
+  const jugadoresStatsFiltrados = useMemo(() => {
+    const rows = jugadoresStatsQ.data ?? []
     const t = playerSearch.trim().toLowerCase()
-    if (!t) return jugadoresEquipo
-    return jugadoresEquipo.filter(
+    if (!t) return rows
+    return rows.filter(
       (j) => j.nombre.toLowerCase().includes(t) || String(j.documento ?? '').toLowerCase().includes(t),
     )
-  }, [jugadoresEquipo, playerSearch])
+  }, [jugadoresStatsQ.data, playerSearch])
+
+  const partidosEquipo = partidosEquipoQ.data ?? []
+  const proximosPartidos = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return partidosEquipo
+      .filter((p) => {
+        const estado = p.estado.toLowerCase()
+        return estado.includes('pendiente') || estado.includes('program') || Boolean(p.fecha && p.fecha >= today)
+      })
+      .sort((a, b) => `${a.fecha ?? '9999-99-99'} ${a.hora ?? '99:99'}`.localeCompare(`${b.fecha ?? '9999-99-99'} ${b.hora ?? '99:99'}`))
+  }, [partidosEquipo])
+
+  const resultadosAnteriores = useMemo(
+    () =>
+      partidosEquipo
+        .filter((p) => {
+          const estado = p.estado.toLowerCase()
+          return estado.includes('jugad') || estado.includes('final') || estado.includes('suspend') || p.marcadorLocal != null || p.marcadorVisitante != null
+        })
+        .sort((a, b) => `${b.fecha ?? ''} ${b.hora ?? ''}`.localeCompare(`${a.fecha ?? ''} ${a.hora ?? ''}`)),
+    [partidosEquipo],
+  )
+
+  const estadisticasEquipoDetalle = useMemo(() => {
+    return partidosEquipo.reduce(
+      (acc, partido) => {
+        const estado = partido.estado.toLowerCase()
+        const tieneActa =
+          Boolean(partido.definicion) ||
+          estado.includes('jugad') ||
+          estado.includes('final') ||
+          estado.includes('suspend')
+        if (!tieneActa) return acc
+
+        acc.partidosJugados += 1
+
+        if (partido.marcadorLocal == null || partido.marcadorVisitante == null || partido.definicion === 'suspendido') {
+          return acc
+        }
+
+        if (partido.condicion === 'Local') {
+          acc.golesFavor += partido.marcadorLocal
+          acc.golesContra += partido.marcadorVisitante
+        } else {
+          acc.golesFavor += partido.marcadorVisitante
+          acc.golesContra += partido.marcadorLocal
+        }
+        return acc
+      },
+      { partidosJugados: 0, golesFavor: 0, golesContra: 0 },
+    )
+  }, [partidosEquipo])
+
+  const equipoDetalleStats: { label: string; value: string | number; Icon: LucideIcon }[] = [
+    { label: 'Jugadores', value: equipoResumenQ.data?.jugadores ?? selectedEquipo?.jugadores ?? 0, Icon: Users },
+    { label: 'Partidos jugados', value: estadisticasEquipoDetalle.partidosJugados, Icon: CalendarDays },
+    { label: 'Goles a favor', value: estadisticasEquipoDetalle.golesFavor, Icon: Trophy },
+    { label: 'Goles en contra', value: estadisticasEquipoDetalle.golesContra, Icon: Shield },
+    {
+      label: 'Estado pago',
+      value: equipoResumenQ.data?.estadoPago ?? (selectedEquipo?.inscripcionPagada ? 'pagada' : 'pendiente'),
+      Icon: CheckCircle,
+    },
+  ]
 
   const [playerForm, setPlayerForm] = useState({
     nombreCompleto: '',
@@ -315,6 +441,7 @@ export function EquiposPage() {
         foto_public_id: playerForm.fotoPublicId ?? null,
       })
       toast.success('Jugador registrado')
+      invalidateEquipoDetalle()
       setPlayerDialogOpen(false)
       setPlayerForm({
         nombreCompleto: '',
@@ -401,6 +528,7 @@ export function EquiposPage() {
         void qc.invalidateQueries({ queryKey: jugadoresCategoriaQueryKey(catId) })
       }
       void qc.invalidateQueries({ queryKey: jugadoresQueryKey(eqId) })
+      invalidateEquipoDetalle(eqId)
     } catch (err) {
       toast.error(translateUserError(err, 'excel'))
     }
@@ -429,6 +557,7 @@ export function EquiposPage() {
         motivo: transferMotivo.trim() || 'Cambio de equipo',
       })
       toast.success('Jugador transferido')
+      invalidateEquipoDetalle()
       setTransferDialogOpen(false)
       setTransferTarget(null)
     } catch (e) {
@@ -440,6 +569,7 @@ export function EquiposPage() {
     try {
       await desactivarJugador(jugadorId)
       toast.success('Jugador desactivado')
+      invalidateEquipoDetalle()
     } catch (e) {
       toast.error(translateUserError(e, 'jugador'))
     }
@@ -450,6 +580,7 @@ export function EquiposPage() {
     try {
       await eliminarJugador(jugadorId)
       toast.success('Jugador eliminado')
+      invalidateEquipoDetalle()
     } catch (e) {
       toast.error(translateUserError(e, 'jugador'))
     }
@@ -476,6 +607,7 @@ export function EquiposPage() {
         await eliminarJugadoresEquipo({ forzar: true })
       }
       qc.setQueryData(jugadoresQueryKey(selectedEquipo.id), [])
+      invalidateEquipoDetalle(selectedEquipo.id)
       if (selectedCategoria) {
         void qc.invalidateQueries({ queryKey: jugadoresCategoriaQueryKey(selectedCategoria) })
         void qc.invalidateQueries({ queryKey: equiposQueryKey(selectedCategoria) })
@@ -484,6 +616,13 @@ export function EquiposPage() {
     } catch (e) {
       toast.error(translateUserError(e, 'jugador'))
     }
+  }
+
+  const invalidateEquipoDetalle = (equipoId = selectedEquipo?.id) => {
+    if (!equipoId) return
+    void qc.invalidateQueries({ queryKey: ['equipo-resumen-detalle', equipoId] })
+    void qc.invalidateQueries({ queryKey: ['jugadores-equipo-estadisticas', equipoId] })
+    void qc.invalidateQueries({ queryKey: ['equipo-partidos-detalle', equipoId] })
   }
 
   const loading = torneoLoading || catLoading
@@ -855,7 +994,7 @@ export function EquiposPage() {
                   <div className="flex gap-2">
                     <Button variant="outline" className="flex-1" onClick={() => openPlayersSheet(equipo)}>
                       <Users className="mr-2 h-4 w-4" />
-                      Jugadores
+                      Ver detalle
                     </Button>
                     <Button variant="ghost" size="icon" onClick={() => openTeamDialog(equipo)} disabled={eqMutating}>
                       <Edit className="h-4 w-4" />
@@ -976,45 +1115,66 @@ export function EquiposPage() {
         </CardContent>
       </Card>
 
-      <Sheet
+      <Dialog
         open={isPlayersSheetOpen}
         onOpenChange={(open) => {
           setIsPlayersSheetOpen(open)
           if (!open) setSelectedEquipo(null)
         }}
       >
-        <SheetContent className="flex w-full flex-col overflow-y-auto sm:max-w-xl">
-          <SheetHeader>
-            <div className="flex items-center gap-3">
+        <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-none overflow-y-auto p-0 sm:!max-w-[1280px] xl:!max-w-[1360px]">
+          <DialogHeader className="border-b bg-muted/20 px-6 py-5">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 items-center gap-4">
               {resolveDisplayImageUrl(
-                selectedEquipo?.logoPublicId,
-                selectedEquipo?.logoUrl,
+                equipoResumenQ.data?.logoPublicId ?? selectedEquipo?.logoPublicId,
+                equipoResumenQ.data?.logoUrl ?? selectedEquipo?.logoUrl,
                 displayImagePresets.equipoLogo(),
               ) ? (
                 <img
                   src={resolveDisplayImageUrl(
-                    selectedEquipo?.logoPublicId,
-                    selectedEquipo?.logoUrl,
+                    equipoResumenQ.data?.logoPublicId ?? selectedEquipo?.logoPublicId,
+                    equipoResumenQ.data?.logoUrl ?? selectedEquipo?.logoUrl,
                     displayImagePresets.equipoLogo(),
                   )}
                   alt=""
-                  className="h-10 w-10 rounded-lg border object-cover"
+                  className="h-16 w-16 rounded-xl border bg-white object-cover"
                 />
               ) : (
                 <div
-                  className="flex h-10 w-10 items-center justify-center rounded-lg text-sm font-bold text-white"
+                  className="flex h-16 w-16 items-center justify-center rounded-xl text-lg font-bold text-white"
                   style={{ backgroundColor: selectedEquipo?.color }}
                 >
                   {selectedEquipo?.logoPlaceholder}
                 </div>
               )}
-              <div>
-                <SheetTitle>{selectedEquipo?.nombre}</SheetTitle>
-                <SheetDescription>Gestión de jugadores del equipo</SheetDescription>
+                <div className="min-w-0">
+                  <DialogTitle className="truncate text-2xl">{equipoResumenQ.data?.nombre ?? selectedEquipo?.nombre}</DialogTitle>
+                  <DialogDescription>{equipoResumenQ.data?.categoria || catNombre} · Detalle deportivo y gestión de jugadores</DialogDescription>
+                </div>
               </div>
+              <Badge variant={selectedEquipo?.inscripcionPagada ? 'default' : 'destructive'} className="w-fit">
+                {selectedEquipo?.inscripcionPagada ? 'Inscripción pagada' : 'Pago pendiente'}
+              </Badge>
             </div>
-          </SheetHeader>
-          <div className="mt-6 flex flex-1 flex-col gap-4">
+          </DialogHeader>
+          <div className="space-y-5 px-4 py-5 sm:px-6">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              {equipoDetalleStats.map(({ label, value, Icon }) => (
+                <Card key={label} className="border-muted bg-background">
+                  <CardContent className="flex items-center gap-3 p-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-background">
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-muted-foreground">{label}</p>
+                      <p className="truncate text-lg font-semibold">{String(value)}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <div className="min-w-0 space-y-4 rounded-xl border bg-background p-4">
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1024,9 +1184,9 @@ export function EquiposPage() {
                 onChange={(e) => setPlayerSearch(e.target.value)}
               />
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h4 className="text-sm font-medium">{jugadoresEquipo.length} jugadores activos</h4>
-              <div className="flex flex-wrap gap-2">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <h4 className="text-sm font-medium">{jugadoresStatsQ.data?.length ?? jugadoresEquipo.length} jugadores activos</h4>
+              <div className="flex min-w-0 flex-wrap gap-2">
                 <input
                   ref={jugadoresImportRef}
                   type="file"
@@ -1209,8 +1369,14 @@ export function EquiposPage() {
               </DialogContent>
             </Dialog>
 
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-              {jugadoresEquipo.length === 0 ? (
+            <div className="min-w-0 overflow-x-auto rounded-md border">
+              {jugadoresStatsQ.isLoading ? (
+                <div className="space-y-2 p-4">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
+                  ))}
+                </div>
+              ) : jugadoresStatsFiltrados.length === 0 ? (
                 <div className="p-8">
                   <EmptyState
                     icon={UserPlus}
@@ -1229,27 +1395,24 @@ export function EquiposPage() {
                   />
                 </div>
               ) : (
-              <Table>
+              <Table className="min-w-[980px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">Foto</TableHead>
                     <TableHead>Nombre</TableHead>
                     <TableHead>Documento</TableHead>
                     <TableHead>Nacimiento</TableHead>
-                    <TableHead>Edad</TableHead>
                     <TableHead className="text-center">PJ</TableHead>
+                    <TableHead className="text-center">Goles</TableHead>
+                    <TableHead className="text-center">Amarillas</TableHead>
+                    <TableHead className="text-center">Rojas</TableHead>
+                    <TableHead className="text-center">Fair Play</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {jugadoresEquipoFiltrados.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
-                        Ningún jugador coincide con la búsqueda.
-                      </TableCell>
-                    </TableRow>
-                  ) : jugadoresEquipoFiltrados.map((jugador) => {
+                  {jugadoresStatsFiltrados.map((jugador) => {
                     const fotoSrc = resolveDisplayImageUrl(jugador.fotoPublicId, jugador.fotoUrl, {
                       width: 40,
                       height: 40,
@@ -1258,10 +1421,7 @@ export function EquiposPage() {
                       format: 'auto',
                     })
                     return (
-                    <TableRow key={jugador.id}>
-                      <TableCell className="text-center text-sm font-medium tabular-nums">
-                        {jugador.partidosJugados ?? 0}
-                      </TableCell>
+                    <TableRow key={jugador.jugadorId}>
                       <TableCell>
                         {fotoSrc ? (
                           <img src={fotoSrc} alt="" className="h-8 w-8 rounded-md border object-cover" />
@@ -1271,50 +1431,53 @@ export function EquiposPage() {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="font-medium">{jugador.nombre}</TableCell>
+                      <TableCell className="max-w-[260px] truncate font-medium" title={jugador.nombre}>
+                        {jugador.nombre}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{jugador.documento}</TableCell>
                       <TableCell className="text-sm">
-                        {jugador.fechaNacimiento ?? jugador.anioNacimiento ?? '—'}
+                        {jugador.fechaNacimiento ? formatDateOnly(jugador.fechaNacimiento) : jugador.anioNacimiento ?? '-'}
                       </TableCell>
-                      <TableCell className="text-sm">
-                        {jugador.anioNacimiento ? edadDesdeAnio(jugador.anioNacimiento) : '—'}
-                      </TableCell>
+                      <TableCell className="text-center font-medium tabular-nums">{jugador.partidosJugados}</TableCell>
+                      <TableCell className="text-center tabular-nums">{jugador.goles}</TableCell>
+                      <TableCell className="text-center tabular-nums">{jugador.amarillas}</TableCell>
+                      <TableCell className="text-center tabular-nums">{jugador.rojas}</TableCell>
+                      <TableCell className="text-center tabular-nums">{jugador.fairplay}</TableCell>
                       <TableCell>
-                        {jugador.estado === 'activo' ? (
-                          <Badge variant="outline" className="border-success text-success">
-                            Activo
-                          </Badge>
-                        ) : jugador.estado === 'advertencia' ? (
-                          <Badge variant="outline" className="border-warning text-warning-foreground">
-                            {jugador.advertencia}
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary">Inactivo</Badge>
-                        )}
+                        <Badge variant="outline" className="border-success text-success">Activo</Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" onClick={() => openTransfer(jugador.id, jugador.nombre)}>
-                          <ArrowRightLeft className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-muted-foreground"
-                          onClick={() => void handleDeactivatePlayer(jugador.id)}
-                          disabled={jugMutating}
-                        >
-                          Retirar
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          type="button"
-                          size="sm"
-                          className="text-destructive"
-                          onClick={() => void handleDeletePlayer(jugador.id)}
-                          disabled={jugMutating}
-                        >
-                          Eliminar
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Cambiar de equipo"
+                            onClick={() => openTransfer(jugador.jugadorId, jugador.nombre)}
+                          >
+                            <ArrowRightLeft className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground"
+                            title="Retirar"
+                            onClick={() => void handleDeactivatePlayer(jugador.jugadorId)}
+                            disabled={jugMutating}
+                          >
+                            <User className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            type="button"
+                            size="icon"
+                            className="text-destructive"
+                            title="Eliminar"
+                            onClick={() => void handleDeletePlayer(jugador.jugadorId)}
+                            disabled={jugMutating}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                     )
@@ -1323,9 +1486,46 @@ export function EquiposPage() {
               </Table>
               )}
             </div>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg">Próximos partidos</CardTitle>
+                  <CardDescription>Programados o pendientes de jugar.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {partidosEquipoQ.isLoading ? (
+                    <Skeleton className="h-28 w-full" />
+                  ) : proximosPartidos.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No hay próximos partidos.</p>
+                  ) : (
+                    proximosPartidos.slice(0, 6).map((partido) => (
+                      <PartidoEquipoCard key={partido.partidoId} partido={partido} />
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg">Resultados anteriores</CardTitle>
+                  <CardDescription>Partidos ya jugados o con acta.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {partidosEquipoQ.isLoading ? (
+                    <Skeleton className="h-28 w-full" />
+                  ) : resultadosAnteriores.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Todavía no hay resultados registrados.</p>
+                  ) : (
+                    resultadosAnteriores.slice(0, 6).map((partido) => (
+                      <PartidoEquipoCard key={partido.partidoId} partido={partido} showResult />
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </SheetContent>
-      </Sheet>
+          </div>
+        </DialogContent>
+      </Dialog>
       <MediaAssetPicker
         open={teamMediaPickerOpen}
         onOpenChange={setTeamMediaPickerOpen}
