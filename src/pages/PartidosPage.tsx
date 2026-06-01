@@ -924,7 +924,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
   }
 
   const openCrearJornada = () => {
-    if (!requireFaseEspecifica('realizar esta acciÃ³n')) return
+    if (!requireFaseEspecifica('realizar esta acción')) return
     const next = jornadas.length ? Math.max(...jornadas) + 1 : 1
     setJornadaDraft(String(next))
     setCreateJornadaOpen(true)
@@ -959,7 +959,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const openDeleteJornada = (jornada: number, grupoId?: string | null, grupoNombre?: string | null) => {
     if (!selectedCategoria) return
-    if (!requireFaseEspecifica('realizar esta acciÃ³n')) return
+    if (!requireFaseEspecifica('realizar esta acción')) return
     setDeleteJornada({ jornada, grupoId: grupoId ?? null, grupoNombre: grupoNombre ?? null })
   }
 
@@ -1031,7 +1031,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const handleCrearFase = async (esSiguiente = false) => {
     if (!selectedCategoria) {
-      toast.error('Selecciona una categorÃ­a en Â«Por categorÃ­aÂ».')
+      toast.error('Selecciona una categorí­a en Â«Por categorí­a».')
       return
     }
     if (!faseNombre.trim()) {
@@ -1621,7 +1621,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
     }
     const faseId = selectedFaseIdForRpc()
     if (!faseId) {
-      toast.error('Selecciona una fase especÃ­fica para realizar esta acciÃ³n.')
+      toast.error('Selecciona una fase especí­fica para realizar esta acción.')
       return
     }
     setDeleteFixtureLoading(true)
@@ -1664,12 +1664,12 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
 
   const crearManual = async () => {
     if (!torneoId || !selectedCategoria) {
-      toast.error('Selecciona una categorÃ­a.')
+      toast.error('Selecciona una categorí­a.')
       return
     }
     const fase = fasesList.find((item) => item.id === manualFaseId) ?? null
     if (!fase) {
-      toast.error('Selecciona una fase especÃ­fica.')
+      toast.error('Selecciona una fase especí­fica.')
       return
     }
     const jornada = Number(nuevoJornada)
@@ -2518,7 +2518,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                       type="button"
                       variant="default"
                       onClick={() => {
-                        if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                        if (requireFaseEspecifica('realizar esta acción')) setFixtureOpen(true)
                       }}
                     >
                       {cuadrangularSinGrupos ? 'Generar cuadrangulares' : 'Generar fixture por grupos'}
@@ -2652,7 +2652,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
                   type="button"
                   variant="default"
                   onClick={() => {
-                    if (requireFaseEspecifica('realizar esta acciÃ³n')) setFixtureOpen(true)
+                    if (requireFaseEspecifica('realizar esta acción')) setFixtureOpen(true)
                   }}
                 >
                   Generar fixture
@@ -3151,7 +3151,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
               <div>
                 <CardTitle>Fases del torneo</CardTitle>
                 <CardDescription>
-                  Usa la categorÃ­a elegida en Â«Por categorÃ­aÂ». La fase activa orienta el fixture; los partidos manuales
+                  Usa la categorí­a elegida en «Por categoría». La fase activa orienta el fixture; los partidos manuales
                   pueden asociarse a una fase.
                 </CardDescription>
               </div>
@@ -3405,7 +3405,7 @@ export function PartidosPage({ onOpenActa }: PartidosPageProps) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nueva fase</DialogTitle>
-            <DialogDescription>En la categorÃ­a actualmente seleccionada en Â«Por categorÃ­aÂ».</DialogDescription>
+            <DialogDescription>En la categorí­a actualmente seleccionada en «Por categoría».</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="space-y-1">

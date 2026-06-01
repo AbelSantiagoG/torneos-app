@@ -504,8 +504,8 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     if (pasaAAdministrativo && hayEventos) {
       const ok = confirm(
         value === 'walkover'
-          ? 'Al marcar el partido como W se limpiarÃ¡n los eventos deportivos registrados.'
-          : 'Al marcar el partido como suspendido se limpiarÃ¡n los eventos deportivos registrados.',
+          ? 'Al marcar el partido como W se limpiarán los eventos deportivos registrados.'
+          : 'Al marcar el partido como suspendido se limpiarán los eventos deportivos registrados.',
       )
       if (!ok) return
       limpiarEventosDeportivos()
@@ -609,7 +609,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
         const msg = translateUserError(e, 'programacion')
         toast.error(
           msg.includes('Falta completar') || msg.includes('No se pudo guardar la informaci')
-            ? 'No se pudo guardar el acta por W. Revisa ganador y equipo no presentado; el detalle tÃ©cnico quedÃ³ en consola.'
+            ? 'No se pudo guardar el acta por W. Revisa ganador y equipo no presentado; el detalle técnico quedó en consola.'
             : msg,
         )
       } finally {
@@ -721,7 +721,7 @@ export function ActaPartidoPage({ onBack, initialPartidoId, initialCategoriaId }
     } catch (e) {
       console.error('Error guardando acta', { payload: payloadForLog, error: e })
       const msg = translateUserError(e, 'programacion')
-      toast.error(msg.includes('Falta completar') ? 'No se pudo guardar el acta. Revisa la definiciÃ³n y los campos de resultado.' : msg)
+      toast.error(msg.includes('Falta completar') ? 'No se pudo guardar el acta. Revisa la definición y los campos de resultado.' : msg)
     } finally {
       setSaving(false)
     }
